@@ -7,7 +7,8 @@ public sealed record CleanOptions(
     double SnapTol = 0.5,
     double MergeTol = 1.0,
     double AngleBucketDeg = 0.5,
-    double NodeTol = 0.05);
+    double NodeTol = 0.05,
+    double MinKeepLength = 3.0);
 
 /// <summary>清洗结果。</summary>
 public sealed record CleanResult(
@@ -29,6 +30,40 @@ public static class ContourExtractor
         var cleaned = Cleaning.CleanSegments(segments, o.SnapTol, o.MergeTol, o.AngleBucketDeg);
 
         var (pts, faces) = PlanarGraph.FindFaces(cleaned, o.NodeTol);
+
+        // 噪声过滤：保留"长度达标的线段"或"属于闭合面的边"，其余（填充笔触/碎渣）丢弃
+        if (o.MinKeepLength > 0)
+        {
+            var faceKeys = new HashSet<(Point2D, Point2D)>();
+            foreach (var face in faces)
+            {
+                for (int i = 0; i < face.Count; i++)
+                {
+                    var a = pts[face[i]];
+                    var b = pts[face[(i + 1) % face.Count]];
+                    faceKeys.Add(Canonical(a, b));
+                }
+            }
+
+            var kept = new List<(Point2D A, Point2D B)>();
+            foreach (var s in cleaned)
+            {
+                if (s.A.DistanceTo(s.B) >= o.MinKeepLength)
+                {
+                    kept.Add(s);
+                    continue;
+                }
+                var ka = Point2D.Snap(s.A, o.NodeTol);
+                var kb = Point2D.Snap(s.B, o.NodeTol);
+                if (faceKeys.Contains(Canonical(ka, kb)))
+                    kept.Add(s);
+            }
+            if (kept.Count != cleaned.Count)
+            {
+                cleaned = kept;
+                (pts, faces) = PlanarGraph.FindFaces(cleaned, o.NodeTol);
+            }
+        }
 
         // 面片去重（两个方向各出现一次，按顶点集合去重，保留首次）
         var uniqueFaces = new List<Point2D[]>();
@@ -52,6 +87,9 @@ public static class ContourExtractor
 
         return new CleanResult(cleaned, uniqueFaces, uniqueCircles);
     }
+
+    private static (Point2D, Point2D) Canonical(Point2D a, Point2D b) =>
+        a.X < b.X || (a.X == b.X && a.Y <= b.Y) ? (a, b) : (b, a);
 
     /// <summary>有向多边形的带符号面积绝对值（鞋带公式）。</summary>
     public static double FaceArea(IReadOnlyList<Point2D> face)

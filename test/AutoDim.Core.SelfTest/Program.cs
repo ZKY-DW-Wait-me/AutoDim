@@ -65,5 +65,17 @@ var circles = new List<(Point2D, double)>
 var r5 = ContourExtractor.Process(emptySegs, circles);
 Check(r5.UniqueCircles.Count == 2, "circle dedup -> 2 unique");
 
+// 6) 噪声过滤：正方形上挂一根 0.5mm 短渣，清洗后应被丢弃，面保持 1 个
+var noisy = SquareEdges(sq).Concat(new[] { (new Point2D(5, 0), new Point2D(5, 0.5)) }).ToList();
+var r6 = ContourExtractor.Process(noisy, emptyCircles);
+Check(r6.Faces.Count == 1, "square+noise -> 1 face");
+Check(r6.CleanedSegments.Count == 4, "noise stub removed (cleaned=4)");
+
+// 7) 小特征保护：2x2 小矩形(边 2mm < 3mm)因属于闭合面应被保留
+var small = new[] { new Point2D(0, 0), new Point2D(2, 0), new Point2D(2, 2), new Point2D(0, 2) };
+var r7 = ContourExtractor.Process(SquareEdges(small), emptyCircles);
+Check(r7.Faces.Count == 1, "small square preserved by face membership");
+Check(Math.Abs(ContourExtractor.FaceArea(r7.Faces[0]) - 4.0) < 1e-6, "small square area = 4");
+
 Console.WriteLine(fails == 0 ? "== ALL PASS ==" : $"== {fails} FAILURE(S) ==");
 return fails == 0 ? 0 : 1;

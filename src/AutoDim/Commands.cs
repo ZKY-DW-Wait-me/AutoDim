@@ -230,6 +230,7 @@ public sealed class Commands
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
+            var drawnIds = new List<ObjectId>();
             int drawn = 0;
             foreach (var face in res.Faces)
             {
@@ -237,8 +238,9 @@ public sealed class Commands
                 using var pl = new Polyline { Layer = "ADIM_CLEAN", Closed = true };
                 for (int i = 0; i < face.Length; i++)
                     pl.AddVertexAt(i, new Point2d(face[i].X, face[i].Y), 0, 0, 0);
-                ms.AppendEntity(pl);
+                var pid = ms.AppendEntity(pl);
                 tr.AddNewlyCreatedDBObject(pl, true);
+                drawnIds.Add(pid);
                 drawn++;
             }
             foreach (var (c, r) in res.UniqueCircles)
@@ -247,8 +249,9 @@ public sealed class Commands
                 {
                     Layer = "ADIM_CLEAN"
                 };
-                ms.AppendEntity(ci);
+                var cid = ms.AppendEntity(ci);
                 tr.AddNewlyCreatedDBObject(ci, true);
+                drawnIds.Add(cid);
                 drawn++;
             }
             tr.Commit();
@@ -257,6 +260,12 @@ public sealed class Commands
                 $"\nADIMCLEAN: raw_segments={segs.Count} cleaned={res.CleanedSegments.Count} " +
                 $"faces={res.Faces.Count} circles={res.UniqueCircles.Count} drawn={drawn} " +
                 $"(layer=ADIM_CLEAN)\n");
+
+            if (drawnIds.Count > 0)
+            {
+                ed.WriteMessage("    -> 对清洗结果执行自动标注...\n");
+                RunEngine(doc, drawnIds.ToArray(), new AutoDimOptions());
+            }
         }
         catch (Autodesk.AutoCAD.Runtime.Exception ex)
         {

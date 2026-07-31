@@ -51,6 +51,7 @@ build.sh                dotnet build 封装
 ```
 
 - `ADIMCLEAN` 命令：对选中对象/整图执行清洗，把闭合轮廓与去重圆绘制到 `ADIM_CLEAN` 图层，并打印统计。
+  清洗完成后会对清洗结果直接执行自动标注（一条龙：脏图 → 干净几何 → 标注）。
 - `AutoDim.Core`：纯 C# 几何库（无 AutoCAD 依赖、无 NuGet 包），可独立自测：
   `dotnet run --project test/AutoDim.Core.SelfTest`（覆盖去重/微段合并/内外孔双面/圆去重）。
 - 已知限制：像 test.dwg 这类矢量化碎片图**没有全局闭合外轮廓**，清洗按"逐特征闭合"处理；
@@ -99,7 +100,7 @@ bash test/run-tests.sh
 | `ADIMSCALE` | 设置/清除固定 Dimscale（默认按包围盒自适应 0.5~3.0） |
 | `ADIMCFG` | 切换标注类别开关（总体/分段/孔圆/全部/清空），持久化到图 |
 | `ADIMDEBUG` | 打印多段线几何诊断信息，用于核对标注算法 |
-| `ADIMCLEAN` | 图纸清洗：去重/微段合并/闭合轮廓提取，结果绘制到 ADIM_CLEAN 图层 |
+| `ADIMCLEAN` | 图纸清洗+标注一条龙：去重/微段合并/闭合轮廓提取 → 绘制到 ADIM_CLEAN 图层 → 自动标注 |
 
 ## 路线图（五个阶段代码已完成，后续重点在鲁棒性）
 
