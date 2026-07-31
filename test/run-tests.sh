@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AutoDim 无界面回归测试：编译 -> 部署 .bundle 自动加载 -> accoreconsole 运行 -> 断言
+# AutoDim 无界面回归测试：编译 -> SECURELOAD=0 + NETLOAD -> accoreconsole 运行 -> 断言
 # 用法: bash test/run-tests.sh
 set -uo pipefail
 
@@ -7,25 +7,44 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOTNET="/c/Program Files/dotnet/dotnet.exe"
 ACAD="/d/Program Files/AutoCAD 2025"
 CORECONSOLE="$ACAD/accoreconsole.exe"
-SEED="$ACAD/UserDataCache/zh-cn/Template/acadiso.dwt"
+# 注意：模板 acadiso.dwt 首次初始化会在核心控制台卡住，改用仓库内的 test.dwg 作为输入。
+INPUT="$ROOT/test.dwg"
 SCRIPT="$ROOT/test/run-headless.scr"
 DLL="$ROOT/src/AutoDim/bin/x64/Debug/net8.0-windows/AutoDim.dll"
 LOG="$ROOT/test/last-run.log"
 PLUGINS="$HOME/AppData/Roaming/Autodesk/ApplicationPlugins"
 BUNDLE="$PLUGINS/AutoDim.bundle"
 
+# accoreconsole 需要 Windows 路径（Git Bash 的 /d/... 经 timeout 包装后不转换）
+CORECONSOLE_WIN="$(cygpath -w "$CORECONSOLE")"
+INPUT_WIN="$(cygpath -w "$INPUT")"
+DLL_WIN="$(cygpath -w "$DLL")"
+
 echo "== 1) build =="
 "$DOTNET" build "$ROOT/AutoDim.sln" -c Debug -v minimal || { echo "BUILD FAILED"; exit 1; }
 [ -f "$DLL" ] || { echo "BUILD FAILED: 找不到 $DLL"; exit 1; }
 
-echo "== 2) deploy .bundle (auto-load, 绕开 NETLOAD/安全确认) =="
-mkdir -p "$BUNDLE/Contents"
-cp "$ROOT/deploy/AutoDim.bundle/PackageContents.xml" "$BUNDLE/PackageContents.xml"
-cp "$DLL" "$BUNDLE/Contents/AutoDim.dll"
-echo "  -> $BUNDLE"
+echo "== 2) build headless script (SECURELOAD=0 + NETLOAD) =="
+SCR="$ROOT/test/run-headless.generated.scr"
+# 用 heredoc 生成：变量原样展开，反斜杠不会被吃掉
+cat > "$SCR" <<EOF
+SECURELOAD
+0
+NETLOAD
+$DLL_WIN
+ADIMSAMPLE
+ADIMALL
+ADIMCLEAN
+EOF
+SCR_WIN="$(cygpath -w "$SCR")"
+echo "  -> $SCR"
 
 echo "== 3) headless run (accoreconsole, 最多 90s) =="
-timeout 90 "$CORECONSOLE" /i "$SEED" /s "$SCRIPT" /l en-US > "$LOG" 2>&1
+# 注意：accoreconsole 从 Git Bash(MSYS) 直接启动会卡住，必须经 PowerShell 启动。
+LOG_WIN="$(cygpath -w "$LOG")"
+POWERSHELL="/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+PS_RUNNER_WIN="$(cygpath -w "$ROOT/test/run-headless.ps1")"
+"$POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" -InputDwg "$INPUT_WIN" -Script "$SCR_WIN" -Log "$LOG_WIN" -TimeoutSec 90
 rc=$?
 
 echo "----- accoreconsole 输出 -----"
@@ -34,6 +53,7 @@ DEC="$(iconv -f UTF-16LE -t UTF-8 "$LOG" 2>/dev/null | tr -d '\r')"
 if [ -n "$DEC" ]; then printf '%s\n' "$DEC"; else tr -d '\000' < "$LOG"; fi
 echo "------------------------------"
 [ $rc -eq 124 ] && echo "(!! accoreconsole 超时 90s)"
+rm -f "$SCR"
 
 echo "== 4) assert =="
 fail=0
@@ -41,6 +61,7 @@ fail=0
 CLEAN="$(tr -d '\000' < "$LOG")"
 echo "$CLEAN" | grep -q "ADIMSAMPLE:" || { echo "FAIL: 插件未加载或示例未生成"; fail=1; }
 echo "$CLEAN" | grep -q "AUTODIM:"    || { echo "FAIL: 未执行整图标注"; fail=1; }
+echo "$CLEAN" | grep -q "ADIMCLEAN:"  || { echo "FAIL: 未执行图纸清洗"; fail=1; }
 # 断言至少生成了标注（具体数量随 Phase 2~5 的类别组合变化，不做硬编码）
 tot="$(echo "$CLEAN" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
 { [ -n "$tot" ] && [ "$tot" -gt 0 ]; } || { echo "FAIL: total 标注数量为 0"; fail=1; }

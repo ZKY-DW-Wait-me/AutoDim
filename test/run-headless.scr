@@ -1,6 +1,10 @@
 ; AutoDim headless regression script (accoreconsole).
-; DLL 已通过 ApplicationPlugins 的 .bundle 在启动时自动加载，这里无需 NETLOAD。
-FILEDIA 0
-CMDECHO 1
+; 无界面下 SECURELOAD=1 会直接拒绝 NETLOAD（不弹确认），先置 0。
+; DLL 路径由 run-tests.sh 用 sed 把 __DLL__ 替换为实际路径。
+SECURELOAD
+0
+NETLOAD
+__DLL__
 ADIMSAMPLE
 ADIMALL
+ADIMCLEAN

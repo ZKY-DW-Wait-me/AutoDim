@@ -8,7 +8,8 @@ public sealed record CleanOptions(
     double MergeTol = 1.0,
     double AngleBucketDeg = 0.5,
     double NodeTol = 0.05,
-    double MinKeepLength = 3.0);
+    double MinKeepLength = 3.0,
+    double MinFaceArea = 1.0);
 
 /// <summary>清洗结果。</summary>
 public sealed record CleanResult(
@@ -74,6 +75,9 @@ public static class ContourExtractor
             if (!seenFaces.Add(key)) continue;
             uniqueFaces.Add(face.Select(i => pts[i]).ToArray());
         }
+        // 丢弃过小的碎环（填充笔触交叉产生的微型面，不是可标注特征）
+        if (o.MinFaceArea > 0)
+            uniqueFaces = uniqueFaces.Where(f => FaceArea(f) >= o.MinFaceArea).ToList();
 
         // 圆去重：同圆心 + 同半径(取整)视为重复
         var uniqueCircles = new List<(Point2D, double)>();

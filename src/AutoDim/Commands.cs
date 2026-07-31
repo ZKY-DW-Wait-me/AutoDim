@@ -25,7 +25,8 @@ public sealed class PluginInit : IExtensionApplication
     {
         Document? doc = AcApp.DocumentManager.MdiActiveDocument;
         doc?.Editor.WriteMessage(
-            "\nAutoDim 已加载。命令: AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE\n");
+            "\nAutoDim 已加载。命令: AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / " +
+            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN\n");
     }
 
     public void Terminate() { }
@@ -270,7 +271,7 @@ public sealed class Commands
                 y1 = Math.Max(y1, Math.Max(s.A.Y, s.B.Y));
             }
             double diag = Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-            double gapTol = Math.Max(2.0, diag * 0.01);
+            double gapTol = Math.Max(1.0, diag * 0.001);
 
             ed.WriteMessage(
                 $"\nADIMCLEAN: raw_segments={segs.Count} cleaned={res.CleanedSegments.Count} " +

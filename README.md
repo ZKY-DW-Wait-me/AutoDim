@@ -71,8 +71,13 @@ bash build.sh Release    # Release
 ```bash
 bash test/run-tests.sh
 ```
-脚本会：编译 → 用 `accoreconsole.exe` 加载 DLL、生成 100×60 矩形+2 孔的样例、对整图执行标注 →
-断言输出包含 `ADIMSAMPLE:`、`AUTODIM:` 且 `total>0`，通过则打印 `== PASS ==`。
+脚本会：编译 → 用 `accoreconsole.exe`（SECURELOAD=0 + NETLOAD，输入为仓库内 `test.dwg`）
+执行 `ADIMSAMPLE` / `ADIMALL` / `ADIMCLEAN` → 断言输出包含 `ADIMSAMPLE:`、`AUTODIM:`、`ADIMCLEAN:`
+且 `total>0`，通过则打印 `== PASS ==`。
+
+> 无界面运行踩过的坑（已修复）：模板 `acadiso.dwt` 首次初始化会卡住控制台；`SECURELOAD=1`
+> 会静默拒绝 NETLOAD；accoreconsole 从 Git Bash 直接启动不读脚本（需经
+> [run-headless.ps1](test/run-headless.ps1) 用 PowerShell 启动）；PS1 文件需保持纯 ASCII。
 
 ## 在 AutoCAD 中手动加载试用
 

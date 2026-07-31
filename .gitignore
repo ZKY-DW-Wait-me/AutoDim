@@ -11,6 +11,7 @@ obj/
 # 测试生成的图纸与日志
 test/samples/*.dwg
 test/*.log
+test/*.generated.scr
 *.bak
 *.dwl
 *.dwl2
