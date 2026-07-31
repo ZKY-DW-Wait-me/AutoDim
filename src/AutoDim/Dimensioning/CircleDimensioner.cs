@@ -46,6 +46,12 @@ internal static class CircleDimensioner
 
         if (ext == null) return (dia, pos);
         Extents3d e = ext.Value;
+
+        // —— 给每个圆补画十字中心线(GB：孔/圆必须有中心线，点划线引到零件外便于定位)。
+        // 放这里：即使定位链因过密被跳过，中心线也照画 ——
+        foreach (var c in circles)
+            CenterlineHelper.AddCross(db, tr, space, c.Center, c.Radius, e);
+
         // 定位尺寸链放中圈 tier(2.0×baseGap)：在轮廓分段(0.5×)之外、总体(3.5×)之内。
         double posOff = 2.0 * baseGap;
         double tol = baseGap * 0.05 + 1e-6;
@@ -101,10 +107,6 @@ internal static class CircleDimensioner
             DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, FormatLen(b - a));
             pos++;
         }
-
-        // —— 给每个圆补画十字中心线(GB：孔/圆必须有中心线，点划线引到零件外便于定位) ——
-        foreach (var c in circles)
-            CenterlineHelper.AddCross(db, tr, space, c.Center, c.Radius, ext.Value);
 
         return (dia, pos);
     }
