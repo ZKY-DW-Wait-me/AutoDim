@@ -10,7 +10,8 @@ public sealed record CleanOptions(
     double NodeTol = 0.05,
     double MinKeepLength = 3.0,
     double MinFaceArea = 1.0,
-    double MaxFaceThinness = 60.0);
+    double MaxFaceThinness = 60.0,
+    double LinkGap = 0.0);
 
 /// <summary>一个闭合面：顶点 + 每边 bulge（非 0 表示圆弧边，AutoCAD bulge 约定）。</summary>
 public sealed record FaceData(Point2D[] Points, double[] Bulges);
@@ -68,6 +69,13 @@ public static class ContourExtractor
                 cleaned = kept;
                 (pts, faces) = PlanarGraph.FindFaces(cleaned, o.NodeTol);
             }
+        }
+
+        // 开放链闭合：悬空端点最近优先连接后重新找面（扫描外轮廓碎片闭合成特征）
+        if (o.LinkGap > 0)
+        {
+            cleaned = ChainLinking.LinkOpenEnds(cleaned, o.NodeTol, o.LinkGap);
+            (pts, faces) = PlanarGraph.FindFaces(cleaned, o.NodeTol);
         }
 
         // 面片去重（两个方向各出现一次，按顶点集合去重，保留首次）

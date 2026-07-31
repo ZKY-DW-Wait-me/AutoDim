@@ -238,7 +238,19 @@ public sealed class Commands
                 cp = Cad.OptionsStore.ReadCleanParams(db, tr0);
                 tr0.Commit();
             }
-            var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4]);
+            // 开放链闭合间距：按原始线段包围盒对角线 0.02%（至少 0.5mm），只连真正的近距断口
+            double rx0 = double.MaxValue, ry0 = double.MaxValue;
+            double rx1 = double.MinValue, ry1 = double.MinValue;
+            foreach (var s in segs)
+            {
+                rx0 = Math.Min(rx0, Math.Min(s.A.X, s.B.X));
+                ry0 = Math.Min(ry0, Math.Min(s.A.Y, s.B.Y));
+                rx1 = Math.Max(rx1, Math.Max(s.A.X, s.B.X));
+                ry1 = Math.Max(ry1, Math.Max(s.A.Y, s.B.Y));
+            }
+            double rawDiag = Math.Sqrt((rx1 - rx0) * (rx1 - rx0) + (ry1 - ry0) * (ry1 - ry0));
+            double linkGap = Math.Max(0.5, rawDiag * 0.0002);
+            var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4], linkGap);
             var res = ContourExtractor.Process(segs, circles, co);
             LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN");
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);

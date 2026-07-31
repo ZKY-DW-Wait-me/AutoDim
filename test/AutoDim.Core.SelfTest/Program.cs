@@ -114,5 +114,17 @@ Check(r11.Faces.Count == 0, "thin sliver face dropped");
 var r11b = ContourExtractor.Process(Edges(sq), emptyCircles);
 Check(r11b.Faces.Count == 1, "square kept by thinness filter");
 
+// 12) 开放链闭合：10x5 矩形缺左边（开放链），LinkGap=10 时应闭合成 1 个面；LinkGap=0 时 0 个
+var broken = new List<Seg>
+{
+    new(new Point2D(0, 5), new Point2D(10, 5)),
+    new(new Point2D(10, 5), new Point2D(10, 0)),
+    new(new Point2D(10, 0), new Point2D(0, 0)),
+};
+var r12a = ContourExtractor.Process(broken, emptyCircles, new CleanOptions(LinkGap: 10.0));
+Check(r12a.Faces.Count == 1, "broken rect linked -> 1 face");
+var r12b = ContourExtractor.Process(broken, emptyCircles);
+Check(r12b.Faces.Count == 0, "no link (LinkGap=0) -> 0 faces");
+
 Console.WriteLine(fails == 0 ? "== ALL PASS ==" : $"== {fails} FAILURE(S) ==");
 return fails == 0 ? 0 : 1;
