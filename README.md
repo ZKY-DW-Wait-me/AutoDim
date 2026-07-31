@@ -26,7 +26,7 @@
 
 ```
 src/AutoDim/            插件源码
-  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG）
+  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN）
   SampleBuilder.cs      生成测试样例图（ADIMSAMPLE）
   Selection/            三种触发方式取集
   Dimensioning/         标注引擎与各类别 Dimensioner（总体/分段/孔圆/坐标/任意多边形）
@@ -36,7 +36,7 @@ src/AutoDim.Core/       纯几何清洗库（不依赖 AutoCAD，可独立单测
 deploy/                 AutoCAD ApplicationPlugins 自动加载清单
 picture/                示例截图等图片资源
 test/
-  run-headless.scr      accoreconsole 脚本：bundle 自动加载 + 建样例 + 整图标注
+  run-headless.scr      accoreconsole 脚本：SECURELOAD=0 + NETLOAD + 建样例 + 标注 + 清洗
   run-tests.sh          编译 → 无界面运行 → 断言
   AutoDim.Core.SelfTest/  几何清洗库自测（dotnet run --project test/AutoDim.Core.SelfTest）
 build.sh                dotnet build 封装
@@ -57,6 +57,25 @@ build.sh                dotnet build 封装
   `dotnet run --project test/AutoDim.Core.SelfTest`（覆盖去重/微段合并/内外孔双面/圆去重）。
 - 已知限制：像 test.dwg 这类矢量化碎片图**没有全局闭合外轮廓**，清洗按"逐特征闭合"处理；
   填充/剖面线笔触的识别（噪声过滤）与语义分类是下一步工作。
+
+### 当前效果（test.dwg 实测）
+
+```text
+输入线段(含块展开)  8975
+清洗后              6020
+闭合面(含圆弧bulge) 333
+去重圆              447
+特征组              123
+自动标注总量        2516（总体/分段/孔直径/孔定位）
+无界面运行耗时      约 36s
+```
+
+过滤规则（`AutoDim.Core` 阈值均可配）：长度 <3mm 且不属于闭合面的线段丢弃；
+面积 <1mm² 的碎环丢弃；周长²/面积 >60 的细长碎面丢弃；中心线/虚线/点划线等辅助图层
+默认不参与轮廓提取；组内面全部 <50mm² 的小碎面组只标总体+孔、不标分段尺寸。
+
+尚未完成：尺寸避让布局优化（密集区标注仍可能互相重叠）、MLLM 语义层
+（识别"哪片是轮廓/孔/填充噪声"，MechVQA 一类能力）、3D(STEP) 与知识库路线。
 
 ## 编译
 
