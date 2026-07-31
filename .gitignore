@@ -13,6 +13,8 @@ test/samples/*.dwg
 test/*.log
 test/*.log.err
 test/*.generated.scr
+test/*.dxf
+test/*.png
 *.bak
 *.dwl
 *.dwl2

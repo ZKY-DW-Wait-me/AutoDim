@@ -38,9 +38,26 @@ picture/                示例截图等图片资源
 test/
   run-headless.scr      accoreconsole 脚本：SECURELOAD=0 + NETLOAD + 建样例 + 标注 + 清洗
   run-tests.sh          编译 → 无界面运行 → 断言
+  render_dxf.py         DXF → PNG 渲染（原始几何黑色、标注红色，支持局部放大）——MLLM 语义层前置
   AutoDim.Core.SelfTest/  几何清洗库自测（dotnet run --project test/AutoDim.Core.SelfTest）
 build.sh                dotnet build 封装
 ```
+
+## 图纸渲染（MLLM 语义层前置）
+
+视觉模型要"看图"才能分类轮廓/孔/填充噪声，因此先把 DWG 无界面导出为 DXF、再用 Python 渲染成 PNG：
+
+```bash
+# 1) 无界面导出 DXF（test/dxfout.scr 导出原始图；test/adim_render.scr 先 ADIMCLEAN 再导出标注图）
+powershell -File test/run-headless.ps1 -InputDwg test.dwg -Script test/adim_render.scr -Log test/r.log
+
+# 2) 渲染 PNG（整图或局部：zoom=x0,y0,x1,y1）
+python test/render_dxf.py test/test_annotated.dxf out.png
+python test/render_dxf.py test/test_annotated.dxf out_zoom.png 5800,150,6100,400
+```
+
+渲染验证（test.dwg）：整图 1875×242（宽扁图），局部放大 1401px 高；标注以红色叠加在黑色原始几何上，
+可直接用于视觉模型分类/质检。
 
 ## 图纸清洗（ADIMCLEAN / AutoDim.Core）
 
