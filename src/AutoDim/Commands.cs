@@ -736,6 +736,7 @@ public sealed class Commands
     {
         var boxes = new List<Extents3d>();
         var types = new List<string>();
+        var radialCenters = new List<Point3d?>();
         using (Transaction tr = db.TransactionManager.StartTransaction())
         {
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -744,7 +745,13 @@ public sealed class Commands
             {
                 if (tr.GetObject(id, OpenMode.ForRead) is not Dimension d) continue;
                 if (d.Layer != "ADIM") continue;
-                try { boxes.Add(d.GeometricExtents); types.Add(d.GetType().Name); } catch { }
+                try
+                {
+                    boxes.Add(d.GeometricExtents);
+                    types.Add(d.GetType().Name);
+                    radialCenters.Add(d is RadialDimension rd ? (Point3d?)rd.Center : null);
+                }
+                catch { }
             }
             tr.Commit();
         }
@@ -752,15 +759,31 @@ public sealed class Commands
         var pairCounts = new Dictionary<(string, string), int>();
         for (int i = 0; i < boxes.Count; i++)
             for (int j = i + 1; j < boxes.Count; j++)
-                if (Intersects2d(boxes[i], boxes[j]))
-                {
-                    cnt++;
-                    var key = string.CompareOrdinal(types[i], types[j]) <= 0
-                        ? (types[i], types[j]) : (types[j], types[i]);
-                    pairCounts[key] = pairCounts.GetValueOrDefault(key) + 1;
-                }
+            {
+                if (!BoxesOverlapArea(boxes[i], boxes[j])) continue;
+                // 排除"同一孔的直径线与其定位延伸线在孔心处相交"的假阳性：
+                // Radial 圆心落在另一标注框内视为同孔内部接触
+                if (radialCenters[i] is Point3d ci && BoxContains(boxes[j], ci)) continue;
+                if (radialCenters[j] is Point3d cj && BoxContains(boxes[i], cj)) continue;
+                cnt++;
+                var key = string.CompareOrdinal(types[i], types[j]) <= 0
+                    ? (types[i], types[j]) : (types[j], types[i]);
+                pairCounts[key] = pairCounts.GetValueOrDefault(key) + 1;
+            }
         var top = pairCounts.OrderByDescending(kv => kv.Value).Take(6)
                             .Select(kv => $"{kv.Key.Item1}+{kv.Key.Item2}:{kv.Value}");
         return (cnt, string.Join(" ", top));
+    }
+
+    private static bool BoxContains(Extents3d box, Point3d p) =>
+        p.X >= box.MinPoint.X && p.X <= box.MaxPoint.X &&
+        p.Y >= box.MinPoint.Y && p.Y <= box.MaxPoint.Y;
+
+    /// <summary>仅当两个外接框有正面积交集(而非共享边/点)才算重叠。</summary>
+    private static bool BoxesOverlapArea(Extents3d a, Extents3d b, double eps = 0.01)
+    {
+        double ix = Math.Min(a.MaxPoint.X, b.MaxPoint.X) - Math.Max(a.MinPoint.X, b.MinPoint.X);
+        double iy = Math.Min(a.MaxPoint.Y, b.MaxPoint.Y) - Math.Max(a.MinPoint.Y, b.MinPoint.Y);
+        return ix > eps && iy > eps;
     }
 }
