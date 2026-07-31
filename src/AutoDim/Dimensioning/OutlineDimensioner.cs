@@ -144,7 +144,7 @@ internal static class OutlineDimensioner
         if (n2.DotProduct(centroid - mid) > 0) n2 = -n2;   // 翻到外侧
         // 内层(最靠近零件)：0.5×baseGap。定位尺寸要进一步外推到 2.0×baseGap，
         // 否则 120 这类分段尺寸线会落在 30/65 定位文字区内(穿字)。
-        Point2d dl2 = mid + n2 * (0.5 * baseGap);
+        Point2d dl2 = mid + n2 * (0.8 * baseGap);
 
         var dim = new AlignedDimension(new Point3d(a.X, a.Y, 0), new Point3d(b.X, b.Y, 0),
                                        new Point3d(dl2.X, dl2.Y, 0), "", dimStyleId);

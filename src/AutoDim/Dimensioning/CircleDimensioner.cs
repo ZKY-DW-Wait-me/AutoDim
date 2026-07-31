@@ -28,16 +28,18 @@ internal static class CircleDimensioner
         int dia = 0, pos = 0;
 
         // —— 直径标注：从圆心引径向线，箭头指到圆周，文字覆盖为 ⌀直径。
-        // 方向在 右上/左上 轮流（避开底部 X 定位链与左侧 Y 定位链），避免相邻孔径向线互压 ——
-        var dirs = new[]
-        {
-            new Vector3d(0.70710678118, 0.70710678118, 0.0),
-            new Vector3d(-0.70710678118, 0.70710678118, 0.0),
-        };
-        int k = 0;
+        // 方向从孔簇质心向外辐射：密集簇中线条散开，减少径向线/文字互压 ——
+        double cx = 0, cy = 0;
+        foreach (var c in circles) { cx += c.Center.X; cy += c.Center.Y; }
+        cx /= circles.Count;
+        cy /= circles.Count;
+        var centroid = new Point3d(cx, cy, 0);
         foreach (var c in circles)
         {
-            var dir = dirs[k++ % dirs.Length];
+            var to = c.Center - centroid;
+            Vector3d dir = to.Length > 1e-9
+                ? to.GetNormal()
+                : new Vector3d(0.70710678118, 0.70710678118, 0.0);
             Point3d chordPt = c.Center + dir * c.Radius;   // 圆周上的点（箭头位置）
             string txt = "%%c" + FormatLen(c.Radius * 2.0); // %%c = ⌀
             DimUtil.Append(db, tr, space,
