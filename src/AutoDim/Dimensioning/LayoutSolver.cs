@@ -21,7 +21,8 @@ internal static class LayoutSolver
     private const double LineTol = 0.5;     // 尺寸线/引线位置去重容差(mm)
     private const double RotTol = 0.05;     // Rotated 旋转角去重容差(rad)
     private const int MaxRounds = 40;       // 外推最大轮数(每轮处理全部重叠对)
-    private const double OffsetCapFactor = 2.5; // 外推量上限 = 该标注原始偏移的倍数
+    private const double OffsetCapFactor = 4.0; // 外推量上限 = 该标注原始偏移的倍数
+                                                  // (2.5 对相向而行的分段文字不够推到位，提到 4.0)
     private const double NearDupTol = 1.5;  // 近重复测量段容差(mm)：吃掉脏几何/重复面产生的碎片重复标注
 
     /// <summary>整图去重（不移动任何标注；供全局收尾调用）。</summary>
@@ -280,9 +281,12 @@ internal static class LayoutSolver
                 var v = rdd.ChordPoint - rdd.Center;
                 double len = v.Length;
                 if (len < 1e-9) return null;
-                double off0 = origOffsets.TryGetValue(id, out var o0) ? o0 : rdd.LeaderLength;
+                // LeaderLength 属性读取恒为 0（accoreconsole/API 限制），改用
+                // "文字中心到圆心"的实测距离作为当前偏移，外推才真正生效
+                double off = OffsetFromExtents(rdd);
+                double off0 = origOffsets.TryGetValue(id, out var o0) ? o0 : off;
                 origOffsets[id] = off0;
-                return new MoveInfo(rdd.Center, v / len, rdd.LeaderLength, off0);
+                return new MoveInfo(rdd.Center, v / len, off, off0);
             }
             default:
                 return null;
@@ -323,14 +327,31 @@ internal static class LayoutSolver
                     break;
                 case RadialDimension rdd:
                     rdd.LeaderLength = target;
+                    rdd.RecomputeDimensionBlock(true);
+                    // 验证写入是否真的把文字推远（该属性写有时不生效）；
+                    // 没变远则视为不可移动，避免 40 轮空转
+                    if (OffsetFromExtents(rdd) < m.Offset + 0.2) return false;
                     break;
                 default:
                     return false;
             }
-            d.RecomputeDimensionBlock(true);
+            if (d is not RadialDimension) d.RecomputeDimensionBlock(true);
         }
         catch { return false; }
         return true;
+    }
+
+    /// <summary>径向标注当前"文字中心到圆心"的距离（不依赖 LeaderLength 读取）。</summary>
+    private static double OffsetFromExtents(RadialDimension rdd)
+    {
+        try
+        {
+            var e = rdd.GeometricExtents;
+            var c = new Point3d((e.MinPoint.X + e.MaxPoint.X) * 0.5,
+                                (e.MinPoint.Y + e.MaxPoint.Y) * 0.5, 0);
+            return (c - rdd.Center).Length;
+        }
+        catch { return 0; }
     }
 
     // ---------- 几何工具 ----------
