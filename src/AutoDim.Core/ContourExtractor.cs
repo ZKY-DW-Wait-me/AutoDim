@@ -11,19 +11,22 @@ public sealed record CleanOptions(
     double MinKeepLength = 3.0,
     double MinFaceArea = 1.0);
 
+/// <summary>一个闭合面：顶点 + 每边 bulge（非 0 表示圆弧边，AutoCAD bulge 约定）。</summary>
+public sealed record FaceData(Point2D[] Points, double[] Bulges);
+
 /// <summary>清洗结果。</summary>
 public sealed record CleanResult(
-    List<(Point2D A, Point2D B)> CleanedSegments,
-    List<Point2D[]> Faces,
+    List<Seg> CleanedSegments,
+    List<FaceData> Faces,
     List<(Point2D Center, double Radius)> UniqueCircles);
 
 /// <summary>
-/// 清洗管线入口：脏线段 -> 干净线段 -> 闭合面 + 去重圆。
+/// 清洗管线入口：脏线段 -> 干净线段 -> 闭合面（带圆弧 bulge）+ 去重圆。
 /// </summary>
 public static class ContourExtractor
 {
     public static CleanResult Process(
-        IEnumerable<(Point2D A, Point2D B)> segments,
+        IEnumerable<Seg> segments,
         IEnumerable<(Point2D Center, double Radius)> circles,
         CleanOptions? options = null)
     {
@@ -36,17 +39,17 @@ public static class ContourExtractor
         if (o.MinKeepLength > 0)
         {
             var faceKeys = new HashSet<(Point2D, Point2D)>();
-            foreach (var face in faces)
+            foreach (var (verts, _) in faces)
             {
-                for (int i = 0; i < face.Count; i++)
+                for (int i = 0; i < verts.Count; i++)
                 {
-                    var a = pts[face[i]];
-                    var b = pts[face[(i + 1) % face.Count]];
+                    var a = pts[verts[i]];
+                    var b = pts[verts[(i + 1) % verts.Count]];
                     faceKeys.Add(Canonical(a, b));
                 }
             }
 
-            var kept = new List<(Point2D A, Point2D B)>();
+            var kept = new List<Seg>();
             foreach (var s in cleaned)
             {
                 if (s.A.DistanceTo(s.B) >= o.MinKeepLength)
@@ -67,17 +70,17 @@ public static class ContourExtractor
         }
 
         // 面片去重（两个方向各出现一次，按顶点集合去重，保留首次）
-        var uniqueFaces = new List<Point2D[]>();
+        var uniqueFaces = new List<FaceData>();
         var seenFaces = new HashSet<string>();
-        foreach (var face in faces)
+        foreach (var (verts, bulges) in faces)
         {
-            var key = string.Join("|", face.OrderBy(x => x));
+            var key = string.Join("|", verts.OrderBy(x => x));
             if (!seenFaces.Add(key)) continue;
-            uniqueFaces.Add(face.Select(i => pts[i]).ToArray());
+            uniqueFaces.Add(new FaceData(verts.Select(i => pts[i]).ToArray(), bulges.ToArray()));
         }
         // 丢弃过小的碎环（填充笔触交叉产生的微型面，不是可标注特征）
         if (o.MinFaceArea > 0)
-            uniqueFaces = uniqueFaces.Where(f => FaceArea(f) >= o.MinFaceArea).ToList();
+            uniqueFaces = uniqueFaces.Where(f => FaceArea(f.Points) >= o.MinFaceArea).ToList();
 
         // 圆去重：同圆心 + 同半径(取整)视为重复
         var uniqueCircles = new List<(Point2D, double)>();
@@ -92,10 +95,7 @@ public static class ContourExtractor
         return new CleanResult(cleaned, uniqueFaces, uniqueCircles);
     }
 
-    private static (Point2D, Point2D) Canonical(Point2D a, Point2D b) =>
-        a.X < b.X || (a.X == b.X && a.Y <= b.Y) ? (a, b) : (b, a);
-
-    /// <summary>有向多边形的带符号面积绝对值（鞋带公式）。</summary>
+    /// <summary>多边形面积（鞋带公式，按顶点折线计）。</summary>
     public static double FaceArea(IReadOnlyList<Point2D> face)
     {
         double area = 0;
@@ -107,4 +107,7 @@ public static class ContourExtractor
         }
         return Math.Abs(area) / 2.0;
     }
+
+    private static (Point2D, Point2D) Canonical(Point2D a, Point2D b) =>
+        a.X < b.X || (a.X == b.X && a.Y <= b.Y) ? (a, b) : (b, a);
 }

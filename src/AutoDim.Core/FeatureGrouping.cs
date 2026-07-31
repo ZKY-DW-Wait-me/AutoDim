@@ -12,7 +12,7 @@ public sealed record FeatureGroup(List<int> FaceIndices, List<int> CircleIndices
 public static class FeatureGrouping
 {
     public static List<FeatureGroup> GroupFeatures(
-        IReadOnlyList<Point2D[]> faces,
+        IReadOnlyList<FaceData> faces,
         IReadOnlyList<(Point2D Center, double Radius)> circles,
         double gapTol)
     {
@@ -38,7 +38,7 @@ public static class FeatureGrouping
 
         var boxes = new List<(double X0, double Y0, double X1, double Y1)>(n);
         foreach (var face in faces)
-            boxes.Add(FaceBox(face));
+            boxes.Add(FaceBox(face.Points));
         foreach (var (c, r) in circles)
             boxes.Add((c.X - r, c.Y - r, c.X + r, c.Y + r));
 

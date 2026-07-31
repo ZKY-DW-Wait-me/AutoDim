@@ -6,6 +6,7 @@ using Autodesk.AutoCAD.Runtime;
 using AutoDim.Cad;
 using AutoDim.Config;
 using AutoDim.Core;
+using AutoDim.Core.Geometry;
 using AutoDim.Dimensioning;
 using AutoDim.Selection;
 // Application 用别名精确指向 core 版本（accoremgd），兼容 accoreconsole 与完整 AutoCAD，
@@ -174,7 +175,7 @@ public sealed class Commands
             return;
         }
 
-        var segs = new List<(CPoint A, CPoint B)>();
+        var segs = new List<Seg>();
         var circles = new List<(CPoint Center, double Radius)>();
         try
         {
@@ -185,8 +186,9 @@ public sealed class Commands
                 switch (ent)
                 {
                     case Line ln:
-                        segs.Add((new CPoint(ln.StartPoint.X, ln.StartPoint.Y),
-                                  new CPoint(ln.EndPoint.X, ln.EndPoint.Y)));
+                        segs.Add(new Seg(
+                            new CPoint(ln.StartPoint.X, ln.StartPoint.Y),
+                            new CPoint(ln.EndPoint.X, ln.EndPoint.Y)));
                         break;
                     case Polyline pl:
                     {
@@ -195,13 +197,13 @@ public sealed class Commands
                         {
                             var p1 = pl.GetPoint2dAt(i);
                             var p2 = pl.GetPoint2dAt(i + 1);
-                            segs.Add((new CPoint(p1.X, p1.Y), new CPoint(p2.X, p2.Y)));
+                            segs.Add(new Seg(new CPoint(p1.X, p1.Y), new CPoint(p2.X, p2.Y)));
                         }
                         if (pl.Closed && n > 2)
                         {
                             var pn = pl.GetPoint2dAt(n - 1);
                             var p0 = pl.GetPoint2dAt(0);
-                            segs.Add((new CPoint(pn.X, pn.Y), new CPoint(p0.X, p0.Y)));
+                            segs.Add(new Seg(new CPoint(pn.X, pn.Y), new CPoint(p0.X, p0.Y)));
                         }
                         break;
                     }
@@ -212,15 +214,12 @@ public sealed class Commands
                     {
                         double a0 = ar.StartAngle, a1 = ar.EndAngle;
                         if (a1 <= a0) a1 += 2.0 * Math.PI;
-                        int steps = Math.Max(2, (int)((a1 - a0) * ar.Radius / 2.0) + 1);
                         var c = ar.Center;
-                        for (int i = 0; i < steps; i++)
-                        {
-                            double t0 = a0 + (a1 - a0) * i / steps;
-                            double t1 = a0 + (a1 - a0) * (i + 1) / steps;
-                            segs.Add((new CPoint(c.X + ar.Radius * Math.Cos(t0), c.Y + ar.Radius * Math.Sin(t0)),
-                                      new CPoint(c.X + ar.Radius * Math.Cos(t1), c.Y + ar.Radius * Math.Sin(t1))));
-                        }
+                        // 圆弧整段保留：单条弦 + bulge，圆角信息不丢
+                        segs.Add(new Seg(
+                            new CPoint(c.X + ar.Radius * Math.Cos(a0), c.Y + ar.Radius * Math.Sin(a0)),
+                            new CPoint(c.X + ar.Radius * Math.Cos(a1), c.Y + ar.Radius * Math.Sin(a1)),
+                            Math.Tan((a1 - a0) / 4.0)));
                         break;
                     }
                 }
@@ -237,10 +236,10 @@ public sealed class Commands
             for (int fi = 0; fi < res.Faces.Count; fi++)
             {
                 var face = res.Faces[fi];
-                if (face.Length < 3) continue;
+                if (face.Points.Length < 3) continue;
                 using var pl = new Polyline { Layer = "ADIM_CLEAN", Closed = true };
-                for (int i = 0; i < face.Length; i++)
-                    pl.AddVertexAt(i, new Point2d(face[i].X, face[i].Y), 0, 0, 0);
+                for (int i = 0; i < face.Points.Length; i++)
+                    pl.AddVertexAt(i, new Point2d(face.Points[i].X, face.Points[i].Y), face.Bulges[i], 0, 0);
                 var pid = ms.AppendEntity(pl);
                 tr.AddNewlyCreatedDBObject(pl, true);
                 drawnFaceIdx.Add(fi);
