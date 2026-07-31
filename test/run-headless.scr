@@ -1,0 +1,6 @@
+; AutoDim headless regression script (accoreconsole).
+; DLL 已通过 ApplicationPlugins 的 .bundle 在启动时自动加载，这里无需 NETLOAD。
+FILEDIA 0
+CMDECHO 1
+ADIMSAMPLE
+ADIMALL

@@ -1,0 +1,21 @@
+# .NET build output
+bin/
+obj/
+
+# VS / Rider
+.vs/
+*.user
+*.suo
+.idea/
+
+# 测试生成的图纸与日志
+test/samples/*.dwg
+test/*.log
+*.bak
+*.dwl
+*.dwl2
+
+# 本地工具配置（不入库）
+.claude/
+.vscode/
+.codex-tmp/

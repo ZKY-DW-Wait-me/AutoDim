@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AutoDim 自动加载清单（AutoCAD ApplicationPlugins 机制）。
+  放到 %APPDATA%\Autodesk\ApplicationPlugins\AutoDim.bundle\ 下，
+  AutoCAD / accoreconsole 启动时自动加载 Contents\AutoDim.dll，无需 NETLOAD、不触发安全确认。
+-->
+<ApplicationPackage SchemaVersion="1.0"
+                    AutodeskProduct="AutoCAD"
+                    ProductType="Application"
+                    Name="AutoDim"
+                    AppVersion="1.0.0"
+                    ProductCode="{7B3E9F1A-4C2D-4E8B-9A11-2F6C5D8E0A34}"
+                    Description="AutoDim - 自动尺寸标注插件 (AutoCAD 2025 / .NET 8)">
+  <CompanyDetails Name="AutoDim" />
+  <Components Description="AutoDim managed module">
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD*" SeriesMin="R25.0" SeriesMax="R25.0" />
+    <ComponentEntry AppName="AutoDim"
+                    Version="1.0.0"
+                    ModuleName="./Contents/AutoDim.dll"
+                    AppType=".NET"
+                    LoadOnAutoCADStartup="True" />
+  </Components>
+</ApplicationPackage>
