@@ -11,6 +11,8 @@ namespace AutoDim.Dimensioning;
 /// </summary>
 internal static class CircleDimensioner
 {
+    private const int MaxChainPts = 11;  // 定位链最多段数；更密则跳过（链变噪音且压线）
+
     /// <returns>(直径标注数, 定位标注数)</returns>
     public static (int diameters, int positions) Annotate(
         Database db, Transaction tr, BlockTableRecord space,
@@ -24,10 +26,17 @@ internal static class CircleDimensioner
 
         int dia = 0, pos = 0;
 
-        // —— 直径标注：从圆心引出 45° 径向线，箭头指到圆周，文字覆盖为 ⌀直径 ——
+        // —— 直径标注：从圆心引径向线，箭头指到圆周，文字覆盖为 ⌀直径。
+        // 方向在 右上/左上 轮流（避开底部 X 定位链与左侧 Y 定位链），避免相邻孔径向线互压 ——
+        var dirs = new[]
+        {
+            new Vector3d(0.70710678118, 0.70710678118, 0.0),
+            new Vector3d(-0.70710678118, 0.70710678118, 0.0),
+        };
+        int k = 0;
         foreach (var c in circles)
         {
-            var dir = new Vector3d(0.70710678118, 0.70710678118, 0.0);
+            var dir = dirs[k++ % dirs.Length];
             Point3d chordPt = c.Center + dir * c.Radius;   // 圆周上的点（箭头位置）
             string txt = "%%c" + FormatLen(c.Radius * 2.0); // %%c = ⌀
             DimUtil.Append(db, tr, space,
@@ -46,6 +55,7 @@ internal static class CircleDimensioner
         // 基准端(左下角)与末端(右下角)用零件角点。延伸线穿零件实体是内部孔定位的 GB 常态。
         var holeXs = circles.Select(c => c.Center.X).Distinct().OrderBy(v => v).ToList();
         double bottomY = e.MinPoint.Y, topY = e.MaxPoint.Y, rightX = e.MaxPoint.X;
+        if (holeXs.Count + 1 > MaxChainPts) return (dia, pos);   // 太密：定位链会互相压线，跳过
         // 每个 X 对应的圆心 Y(同一 X 若有多孔，取第一个；延伸线都从该圆心引)
         var xToY = new Dictionary<double, double>();
         foreach (var c in circles)
@@ -71,6 +81,7 @@ internal static class CircleDimensioner
         // —— Y 定位链：minY→cy1→cy2→...→maxY。延伸线从圆心水平引到零件左侧的尺寸线。
         var holeYs = circles.Select(c => c.Center.Y).Distinct().OrderBy(v => v).ToList();
         double leftX = e.MinPoint.X;
+        if (holeYs.Count + 1 > MaxChainPts) return (dia, pos);   // 太密：跳过
         var yToX = new Dictionary<double, double>();
         foreach (var c in circles)
             if (!yToX.ContainsKey(c.Center.Y)) yToX[c.Center.Y] = c.Center.X;

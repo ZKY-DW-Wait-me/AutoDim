@@ -364,9 +364,10 @@ public sealed class Commands
                         }
                     }
                 }
-                int overlaps = CountDimOverlaps(db);
+                var (overlaps, overlapTop) = CountDimOverlaps(db);
                 ed.WriteMessage(
-                    $"    -> 合计: {dimmedGroups} 组 / {sumDims} 个标注 / ADIM 标注重叠对 {overlaps}\n");
+                    $"    -> 合计: {dimmedGroups} 组 / {sumDims} 个标注 / ADIM 标注重叠对 {overlaps} " +
+                    $"[{overlapTop}]\n");
             }
         }
         catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -731,9 +732,10 @@ public sealed class Commands
     }
 
     /// <summary>统计 ADIM 图层 Dimension 外接框之间的重叠对数（布局质量信号）。</summary>
-    private static int CountDimOverlaps(Database db)
+    private static (int Count, string Top) CountDimOverlaps(Database db)
     {
         var boxes = new List<Extents3d>();
+        var types = new List<string>();
         using (Transaction tr = db.TransactionManager.StartTransaction())
         {
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -742,14 +744,23 @@ public sealed class Commands
             {
                 if (tr.GetObject(id, OpenMode.ForRead) is not Dimension d) continue;
                 if (d.Layer != "ADIM") continue;
-                try { boxes.Add(d.GeometricExtents); } catch { }
+                try { boxes.Add(d.GeometricExtents); types.Add(d.GetType().Name); } catch { }
             }
             tr.Commit();
         }
         int cnt = 0;
+        var pairCounts = new Dictionary<(string, string), int>();
         for (int i = 0; i < boxes.Count; i++)
             for (int j = i + 1; j < boxes.Count; j++)
-                if (Intersects2d(boxes[i], boxes[j])) cnt++;
-        return cnt;
+                if (Intersects2d(boxes[i], boxes[j]))
+                {
+                    cnt++;
+                    var key = string.CompareOrdinal(types[i], types[j]) <= 0
+                        ? (types[i], types[j]) : (types[j], types[i]);
+                    pairCounts[key] = pairCounts.GetValueOrDefault(key) + 1;
+                }
+        var top = pairCounts.OrderByDescending(kv => kv.Value).Take(6)
+                            .Select(kv => $"{kv.Key.Item1}+{kv.Key.Item2}:{kv.Value}");
+        return (cnt, string.Join(" ", top));
     }
 }

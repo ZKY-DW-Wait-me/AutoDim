@@ -16,6 +16,8 @@ namespace AutoDim.Dimensioning;
 internal static class OutlineDimensioner
 {
     private const double Tol = 1e-6;
+    private const int MaxSegDims = 16;   // 每面最多标的分段数（优先长边，控制复杂边界尺寸线互压）
+    private const int MaxArcDims = 8;    // 每面最多标的圆弧 R 数（优先大半径；小圆角通常"未注圆角"）
 
     /// <returns>(直线段标注数, 圆弧段标注数)</returns>
     public static (int segments, int arcs) Annotate(
@@ -24,6 +26,8 @@ internal static class OutlineDimensioner
         Extents3d? ext = null)
     {
         int seg = 0, arc = 0;
+        // 短碎边不标：相对该轮廓尺度自适应（0.35×偏移量），过滤矢量化噪声的亚毫米/毫米级碎段
+        double minSegLen = System.Math.Max(0.5, baseGap * 0.35);
 
         foreach (var id in ids)
         {
@@ -33,25 +37,41 @@ internal static class OutlineDimensioner
             Point2d centroid = PolylineCentroid(pl);
             int n = pl.NumberOfVertices;
 
+            // 直线段：先收集候选（跳过最外整边与短碎边），按长度排序，最多取 MaxSegDims 条
+            var cands = new List<(int I, double Len)>();
             for (int i = 0; i < n; i++)
             {
                 if (!pl.Closed && i == n - 1) break;
                 int j = (i + 1) % n;
-
-                // 跳过贴包围盒外缘的整边(底/顶整宽、左/右整高)：那条尺寸由其它分段拼出，
-                // 若再标会与分段形成封闭链(GB/T 4458.4)。例：底边(0,0)->(120,0) 是整宽，分段 30+65+25 已覆盖，跳过。
                 if (ext != null && IsOutermostEdge(pl, i, j, ext.Value))
                     continue;
+                if (System.Math.Abs(pl.GetBulgeAt(i)) >= 1e-9) continue;
+                double len = (pl.GetPoint2dAt(j) - pl.GetPoint2dAt(i)).Length;
+                if (len < minSegLen) continue;
+                cands.Add((i, len));
+            }
+            cands.Sort((x, y) => y.Len.CompareTo(x.Len));
+            if (cands.Count > MaxSegDims)
+                cands = cands.GetRange(0, MaxSegDims);
+            foreach (var (i, _) in cands)
+                seg += AnnotateLine(db, tr, space, pl, i, (i + 1) % n, centroid, dimStyleId, layerId, baseGap);
 
-                if (System.Math.Abs(pl.GetBulgeAt(i)) < 1e-9)
-                {
-                    seg += AnnotateLine(db, tr, space, pl, i, j, centroid, dimStyleId, layerId, baseGap);
-                }
-                else
-                {
-                    AnnotateArc(db, tr, space, pl, i, j, centroid, dimStyleId, layerId, baseGap, ext);
-                    arc++;
-                }
+            // 圆弧段：按半径从大到小取前 MaxArcDims 条（R 引线是重叠大户，小圆角不逐个标）
+            var arcCands = new List<(int I, double R)>();
+            for (int i = 0; i < n; i++)
+            {
+                if (!pl.Closed && i == n - 1) break;
+                if (System.Math.Abs(pl.GetBulgeAt(i)) < 1e-9) continue;
+                arcCands.Add((i, pl.GetArcSegment2dAt(i).Radius));
+            }
+            arcCands.Sort((x, y) => y.R.CompareTo(x.R));
+            if (arcCands.Count > MaxArcDims)
+                arcCands = arcCands.GetRange(0, MaxArcDims);
+            foreach (var (i, _) in arcCands)
+            {
+                int j = (i + 1) % n;
+                AnnotateArc(db, tr, space, pl, i, j, centroid, dimStyleId, layerId, baseGap, ext);
+                arc++;
             }
         }
         return (seg, arc);
