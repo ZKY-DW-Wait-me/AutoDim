@@ -230,16 +230,19 @@ public sealed class Commands
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
+            var drawnFaceIdx = new List<int>();
             var drawnIds = new List<ObjectId>();
             int drawn = 0;
-            foreach (var face in res.Faces)
+            for (int fi = 0; fi < res.Faces.Count; fi++)
             {
+                var face = res.Faces[fi];
                 if (face.Length < 3) continue;
                 using var pl = new Polyline { Layer = "ADIM_CLEAN", Closed = true };
                 for (int i = 0; i < face.Length; i++)
                     pl.AddVertexAt(i, new Point2d(face[i].X, face[i].Y), 0, 0, 0);
                 var pid = ms.AppendEntity(pl);
                 tr.AddNewlyCreatedDBObject(pl, true);
+                drawnFaceIdx.Add(fi);
                 drawnIds.Add(pid);
                 drawn++;
             }
@@ -256,6 +259,19 @@ public sealed class Commands
             }
             tr.Commit();
 
+            // 特征分组公差：按清洗结果包围盒对角线比例（至少 2mm）
+            double x0 = double.MaxValue, y0 = double.MaxValue;
+            double x1 = double.MinValue, y1 = double.MinValue;
+            foreach (var s in res.CleanedSegments)
+            {
+                x0 = Math.Min(x0, Math.Min(s.A.X, s.B.X));
+                y0 = Math.Min(y0, Math.Min(s.A.Y, s.B.Y));
+                x1 = Math.Max(x1, Math.Max(s.A.X, s.B.X));
+                y1 = Math.Max(y1, Math.Max(s.A.Y, s.B.Y));
+            }
+            double diag = Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+            double gapTol = Math.Max(2.0, diag * 0.01);
+
             ed.WriteMessage(
                 $"\nADIMCLEAN: raw_segments={segs.Count} cleaned={res.CleanedSegments.Count} " +
                 $"faces={res.Faces.Count} circles={res.UniqueCircles.Count} drawn={drawn} " +
@@ -263,8 +279,21 @@ public sealed class Commands
 
             if (drawnIds.Count > 0)
             {
-                ed.WriteMessage("    -> 对清洗结果执行自动标注...\n");
-                RunEngine(doc, drawnIds.ToArray(), new AutoDimOptions());
+                var groups = FeatureGrouping.GroupFeatures(res.Faces, res.UniqueCircles, gapTol);
+                ed.WriteMessage($"    -> 按 {groups.Count} 个特征组分别标注...\n");
+                foreach (var g in groups)
+                {
+                    var gIds = new List<ObjectId>();
+                    foreach (var fi in g.FaceIndices)
+                    {
+                        int pos = drawnFaceIdx.IndexOf(fi);
+                        if (pos >= 0) gIds.Add(drawnIds[pos]);
+                    }
+                    foreach (var ci in g.CircleIndices)
+                        gIds.Add(drawnIds[drawnFaceIdx.Count + ci]);
+                    if (gIds.Count == 0) continue;
+                    RunEngine(doc, gIds.ToArray(), new AutoDimOptions());
+                }
             }
         }
         catch (Autodesk.AutoCAD.Runtime.Exception ex)

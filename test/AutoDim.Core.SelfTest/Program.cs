@@ -77,5 +77,21 @@ var r7 = ContourExtractor.Process(SquareEdges(small), emptyCircles);
 Check(r7.Faces.Count == 1, "small square preserved by face membership");
 Check(Math.Abs(ContourExtractor.FaceArea(r7.Faces[0]) - 4.0) < 1e-6, "small square area = 4");
 
+// 8) 特征分组：两个分离的正方形 -> 2 组；距离小于 gap 时 -> 1 组
+var sqB = new[] { new Point2D(20, 0), new Point2D(30, 0), new Point2D(30, 10), new Point2D(20, 10) };
+var r8 = ContourExtractor.Process(SquareEdges(sq).Concat(SquareEdges(sqB)), emptyCircles);
+var g8 = FeatureGrouping.GroupFeatures(r8.Faces, r8.UniqueCircles, 3.0);
+Check(g8.Count == 2, "two separated squares -> 2 groups");
+var g8b = FeatureGrouping.GroupFeatures(r8.Faces, r8.UniqueCircles, 15.0);
+Check(g8b.Count == 1, "close squares (gap<=15) -> 1 group");
+
+// 9) 方+孔+圆 -> 1 组，圆归入组
+var r9 = ContourExtractor.Process(
+    SquareEdges(sq).Concat(SquareEdges(inner)),
+    new List<(Point2D, double)> { (new Point2D(5, 5), 1.0) });
+var g9 = FeatureGrouping.GroupFeatures(r9.Faces, r9.UniqueCircles, 3.0);
+Check(g9.Count == 1, "square+hole+circle -> 1 group");
+Check(g9[0].CircleIndices.Count == 1, "circle joined the group");
+
 Console.WriteLine(fails == 0 ? "== ALL PASS ==" : $"== {fails} FAILURE(S) ==");
 return fails == 0 ? 0 : 1;
