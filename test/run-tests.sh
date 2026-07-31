@@ -65,5 +65,9 @@ echo "$CLEAN" | grep -q "ADIMCLEAN:"  || { echo "FAIL: 未执行图纸清洗"; f
 # 断言至少生成了标注（具体数量随 Phase 2~5 的类别组合变化，不做硬编码）
 tot="$(echo "$CLEAN" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
 { [ -n "$tot" ] && [ "$tot" -gt 0 ]; } || { echo "FAIL: total 标注数量为 0"; fail=1; }
+# 幂等断言：连续两次 ADIMCLEAN 的统计行必须完全一致（组级清场修复的回归保护）
+CL1="$(echo "$CLEAN" | grep "ADIMCLEAN:" | tail -2 | head -1)"
+CL2="$(echo "$CLEAN" | grep "ADIMCLEAN:" | tail -1)"
+[ -n "$CL1" ] && [ "$CL1" = "$CL2" ] || { echo "FAIL: 重复运行 ADIMCLEAN 结果不一致(非幂等)"; fail=1; }
 
 if [ "$fail" = "0" ]; then echo "== PASS =="; exit 0; else echo "== TESTS FAILED =="; exit 1; fi
