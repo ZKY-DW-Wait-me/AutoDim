@@ -240,6 +240,8 @@ public sealed class Commands
             var drawnFaceIdx = new List<int>();
             var drawnIds = new List<ObjectId>();
             int drawn = 0;
+            int dimmedGroups = 0;
+            int sumDims = 0;
             for (int fi = 0; fi < res.Faces.Count; fi++)
             {
                 var face = res.Faces[fi];
@@ -311,10 +313,14 @@ public sealed class Commands
                         if (allSmall)
                             cat = DimCategory.Overall | DimCategory.Holes;
                     }
-                    RunEngine(doc, gIds.ToArray(),
-                              new AutoDimOptions { Categories = cat },
-                              usePersistedCategories: false);
+                    sumDims += RunEngine(doc, gIds.ToArray(),
+                                         new AutoDimOptions { Categories = cat },
+                                         usePersistedCategories: false);
+                    dimmedGroups++;
                 }
+                int overlaps = CountDimOverlaps(db);
+                ed.WriteMessage(
+                    $"    -> 合计: {dimmedGroups} 组 / {sumDims} 个标注 / ADIM 标注重叠对 {overlaps}\n");
             }
         }
         catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -627,8 +633,8 @@ public sealed class Commands
             RunEngine(doc, ids, new AutoDimOptions());
     }
 
-    private static void RunEngine(Document doc, ObjectId[] ids, AutoDimOptions opt,
-                                  bool usePersistedCategories = true)
+    private static int RunEngine(Document doc, ObjectId[] ids, AutoDimOptions opt,
+                                 bool usePersistedCategories = true)
     {
         Database db = doc.Database;
         Editor ed = doc.Editor;
@@ -667,7 +673,7 @@ public sealed class Commands
         catch (Autodesk.AutoCAD.Runtime.Exception ex)
         {
             ed.WriteMessage($"\nAUTODIM 出错: {ex.Message}\n");
-            return;
+            return 0;
         }
 
         // 统计行：既反馈用户，也供测试脚本 grep 断言。
@@ -675,5 +681,29 @@ public sealed class Commands
             $"\nAUTODIM: overall={r.Overall} segment={r.Segment} arc={r.Arc} " +
             $"circle={r.Circle} position={r.Position} angular={r.Angular} total={r.Total} " +
             $"skipW={r.SkipW} skipH={r.SkipH} (layer={opt.LayerName})\n");
+        return r.Total;
+    }
+
+    /// <summary>统计 ADIM 图层 Dimension 外接框之间的重叠对数（布局质量信号）。</summary>
+    private static int CountDimOverlaps(Database db)
+    {
+        var boxes = new List<Extents3d>();
+        using (Transaction tr = db.TransactionManager.StartTransaction())
+        {
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId id in ms)
+            {
+                if (tr.GetObject(id, OpenMode.ForRead) is not Dimension d) continue;
+                if (d.Layer != "ADIM") continue;
+                try { boxes.Add(d.GeometricExtents); } catch { }
+            }
+            tr.Commit();
+        }
+        int cnt = 0;
+        for (int i = 0; i < boxes.Count; i++)
+            for (int j = i + 1; j < boxes.Count; j++)
+                if (Intersects2d(boxes[i], boxes[j])) cnt++;
+        return cnt;
     }
 }
