@@ -232,7 +232,14 @@ public sealed class Commands
                 }
             }
 
-            var res = ContourExtractor.Process(segs, circles, new CleanOptions());
+            double[] cp;
+            using (Transaction tr0 = db.TransactionManager.StartTransaction())
+            {
+                cp = Cad.OptionsStore.ReadCleanParams(db, tr0);
+                tr0.Commit();
+            }
+            var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4]);
+            var res = ContourExtractor.Process(segs, circles, co);
             LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN");
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
@@ -393,6 +400,43 @@ public sealed class Commands
     {
         if (layer is "ADIM" or "ADIM_CLEAN" or "ADIM_CENTER" or "Defpoints") return true;
         return layer.Contains("中心线") || layer.Contains("虚线") || layer.Contains("点划线");
+    }
+
+    /// <summary>清洗参数命令：逐个输入 吸附公差/合并公差/最短保留长度/最小面积/最大细长度（0=恢复默认）。</summary>
+    [CommandMethod("ADIMCLN", CommandFlags.Modal)]
+    public void AdimCln()
+    {
+        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
+        if (doc == null) return;
+        Database db = doc.Database;
+        Editor ed = doc.Editor;
+
+        double[] cur;
+        using (Transaction tr0 = db.TransactionManager.StartTransaction())
+        {
+            cur = Cad.OptionsStore.ReadCleanParams(db, tr0);
+            tr0.Commit();
+        }
+
+        string[] names =
+        {
+            "吸附公差 SnapTol", "合并公差 MergeTol", "最短保留长度 MinKeepLength",
+            "最小面积 MinFaceArea", "最大细长度 MaxFaceThinness",
+        };
+        var vals = (double[])cur.Clone();
+        for (int i = 0; i < vals.Length; i++)
+        {
+            var po = new PromptDoubleOptions($"\n{names[i]} <{vals[i]}>: ");
+            po.AllowNegative = true;
+            po.AllowZero = true;
+            var pr = ed.GetDouble(po);
+            if (pr.Status != PromptStatus.OK) return;
+            vals[i] = pr.Value;
+        }
+        Cad.OptionsStore.WriteCleanParams(db, vals);
+        ed.WriteMessage(
+            $"\n已保存清洗参数: SnapTol={vals[0]} MergeTol={vals[1]} MinKeep={vals[2]} " +
+            $"MinArea={vals[3]} Thinness={vals[4]}\n");
     }
 
     private static void RunCoordEngine(Document doc, ObjectId[] ids)

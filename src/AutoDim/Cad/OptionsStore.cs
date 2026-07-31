@@ -10,6 +10,7 @@ internal static class OptionsStore
 {
     private const string NodKey = "AutoDim_Options";
     private const string AutoCleanKey = "AutoDim_AutoClean";
+    private const string CleanKey = "AutoDim_Clean";
 
     /// <summary>读持久化的类别开关；没设过返回 All(默认全开)。</summary>
     public static int ReadCategories(Database db, Transaction tr)
@@ -72,6 +73,44 @@ internal static class OptionsStore
             var rec = new Xrecord();
             rec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int32, on ? 1 : 0));
             nod.SetAt(AutoCleanKey, rec);
+            tr.AddNewlyCreatedDBObject(rec, true);
+        }
+        tr.Commit();
+    }
+
+    /// <summary>读清洗参数（SnapTol/MergeTol/MinKeepLength/MinFaceArea/MaxFaceThinness）；没设过返回默认。</summary>
+    public static double[] ReadCleanParams(Database db, Transaction tr)
+    {
+        var def = new[] { 0.5, 1.0, 3.0, 1.0, 60.0 };
+        var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+        if (!nod.Contains(CleanKey)) return def;
+        if (tr.GetObject(nod.GetAt(CleanKey), OpenMode.ForRead) is not Xrecord rec) return def;
+        var vals = new double[5];
+        int i = 0;
+        foreach (TypedValue tv in rec.Data)
+            if (tv.TypeCode is >= 40 and <= 44 && tv.Value is double d && i < 5)
+                vals[i++] = d;
+        return i == 5 ? vals : def;
+    }
+
+    /// <summary>写清洗参数到 NOD。</summary>
+    public static void WriteCleanParams(Database db, double[] vals)
+    {
+        using Transaction tr = db.TransactionManager.StartTransaction();
+        var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+        var buf = new ResultBuffer();
+        for (int i = 0; i < 5; i++)
+            buf.Add(new TypedValue(40 + i, vals[i]));
+        if (nod.Contains(CleanKey))
+        {
+            var rec = (Xrecord)tr.GetObject(nod.GetAt(CleanKey), OpenMode.ForWrite);
+            rec.Data = buf;
+        }
+        else
+        {
+            nod.UpgradeOpen();
+            var rec = new Xrecord { Data = buf };
+            nod.SetAt(CleanKey, rec);
             tr.AddNewlyCreatedDBObject(rec, true);
         }
         tr.Commit();
