@@ -5,11 +5,13 @@ using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using AutoDim.Cad;
 using AutoDim.Config;
+using AutoDim.Core;
 using AutoDim.Dimensioning;
 using AutoDim.Selection;
 // Application 用别名精确指向 core 版本（accoremgd），兼容 accoreconsole 与完整 AutoCAD，
 // 避免与 acmgd 的 ApplicationServices.Application 产生二义性。
 using AcApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+using CPoint = AutoDim.Core.Geometry.Point2D;
 
 [assembly: ExtensionApplication(typeof(AutoDim.PluginInit))]
 [assembly: CommandClass(typeof(AutoDim.Commands))]
@@ -148,6 +150,117 @@ public sealed class Commands
         {
             Cad.DimStyleSetup.SetUserScale(db, pr.Value);
             ed.WriteMessage($"\n已固定 Dimscale = {pr.Value}。后续 ADIM*/ADIMCOORD 标注将用此值。\n");
+        }
+    }
+
+    /// <summary>
+    /// 图纸清洗命令：对选中/整图执行 去重 -> 微段共线合并 -> 端点吸附 -> 闭合轮廓提取，
+    /// 把清洗出的闭合轮廓与去重圆绘制到 ADIM_CLEAN 图层，供后续标注使用。
+    /// </summary>
+    [CommandMethod("ADIMCLEAN", CommandFlags.UsePickSet | CommandFlags.Modal)]
+    public void AdimClean()
+    {
+        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
+        if (doc == null) return;
+        Editor ed = doc.Editor;
+        Database db = doc.Database;
+
+        ObjectId[]? ids = SelectionService.Acquire(ed, TriggerMode.Pickfirst)
+                          ?? SelectionService.Acquire(ed, TriggerMode.All);
+        if (ids == null || ids.Length == 0)
+        {
+            ed.WriteMessage("\n未选择到有效对象。\n");
+            return;
+        }
+
+        var segs = new List<(CPoint A, CPoint B)>();
+        var circles = new List<(CPoint Center, double Radius)>();
+        try
+        {
+            using Transaction tr = db.TransactionManager.StartTransaction();
+            foreach (var id in ids)
+            {
+                if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
+                switch (ent)
+                {
+                    case Line ln:
+                        segs.Add((new CPoint(ln.StartPoint.X, ln.StartPoint.Y),
+                                  new CPoint(ln.EndPoint.X, ln.EndPoint.Y)));
+                        break;
+                    case Polyline pl:
+                    {
+                        int n = pl.NumberOfVertices;
+                        for (int i = 0; i < n - 1; i++)
+                        {
+                            var p1 = pl.GetPoint2dAt(i);
+                            var p2 = pl.GetPoint2dAt(i + 1);
+                            segs.Add((new CPoint(p1.X, p1.Y), new CPoint(p2.X, p2.Y)));
+                        }
+                        if (pl.Closed && n > 2)
+                        {
+                            var pn = pl.GetPoint2dAt(n - 1);
+                            var p0 = pl.GetPoint2dAt(0);
+                            segs.Add((new CPoint(pn.X, pn.Y), new CPoint(p0.X, p0.Y)));
+                        }
+                        break;
+                    }
+                    case Circle ci:
+                        circles.Add((new CPoint(ci.Center.X, ci.Center.Y), ci.Radius));
+                        break;
+                    case Arc ar:
+                    {
+                        double a0 = ar.StartAngle, a1 = ar.EndAngle;
+                        if (a1 <= a0) a1 += 2.0 * Math.PI;
+                        int steps = Math.Max(2, (int)((a1 - a0) * ar.Radius / 2.0) + 1);
+                        var c = ar.Center;
+                        for (int i = 0; i < steps; i++)
+                        {
+                            double t0 = a0 + (a1 - a0) * i / steps;
+                            double t1 = a0 + (a1 - a0) * (i + 1) / steps;
+                            segs.Add((new CPoint(c.X + ar.Radius * Math.Cos(t0), c.Y + ar.Radius * Math.Sin(t0)),
+                                      new CPoint(c.X + ar.Radius * Math.Cos(t1), c.Y + ar.Radius * Math.Sin(t1))));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            var res = ContourExtractor.Process(segs, circles, new CleanOptions());
+            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN");
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+            int drawn = 0;
+            foreach (var face in res.Faces)
+            {
+                if (face.Length < 3) continue;
+                using var pl = new Polyline { Layer = "ADIM_CLEAN", Closed = true };
+                for (int i = 0; i < face.Length; i++)
+                    pl.AddVertexAt(i, new Point2d(face[i].X, face[i].Y), 0, 0, 0);
+                ms.AppendEntity(pl);
+                tr.AddNewlyCreatedDBObject(pl, true);
+                drawn++;
+            }
+            foreach (var (c, r) in res.UniqueCircles)
+            {
+                using var ci = new Circle(new Point3d(c.X, c.Y, 0), Vector3d.ZAxis, r)
+                {
+                    Layer = "ADIM_CLEAN"
+                };
+                ms.AppendEntity(ci);
+                tr.AddNewlyCreatedDBObject(ci, true);
+                drawn++;
+            }
+            tr.Commit();
+
+            ed.WriteMessage(
+                $"\nADIMCLEAN: raw_segments={segs.Count} cleaned={res.CleanedSegments.Count} " +
+                $"faces={res.Faces.Count} circles={res.UniqueCircles.Count} drawn={drawn} " +
+                $"(layer=ADIM_CLEAN)\n");
+        }
+        catch (Autodesk.AutoCAD.Runtime.Exception ex)
+        {
+            ed.WriteMessage($"\nADIMCLEAN 出错: {ex.Message}\n");
         }
     }
 

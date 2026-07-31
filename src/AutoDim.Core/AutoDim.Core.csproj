@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AutoDim.Core - 纯几何清洗库（不依赖 AutoCAD 程序集，可独立单测）。
+    用途：把"脏图纸"清洗成可标注的干净几何：
+      去重 -> 微段共线合并 -> 端点吸附 -> 平面图闭合轮廓提取。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>AutoDim.Core</RootNamespace>
+    <AssemblyName>AutoDim.Core</AssemblyName>
+  </PropertyGroup>
+
+</Project>

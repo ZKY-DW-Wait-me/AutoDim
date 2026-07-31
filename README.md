@@ -32,13 +32,29 @@ src/AutoDim/            插件源码
   Dimensioning/         标注引擎与各类别 Dimensioner（总体/分段/孔圆/坐标/任意多边形）
   Cad/                  图层、标注样式助手
   Config/               运行选项
+src/AutoDim.Core/       纯几何清洗库（不依赖 AutoCAD，可独立单测）：去重/微段合并/端点吸附/闭合轮廓提取
 deploy/                 AutoCAD ApplicationPlugins 自动加载清单
 picture/                示例截图等图片资源
 test/
   run-headless.scr      accoreconsole 脚本：bundle 自动加载 + 建样例 + 整图标注
   run-tests.sh          编译 → 无界面运行 → 断言
+  AutoDim.Core.SelfTest/  几何清洗库自测（dotnet run --project test/AutoDim.Core.SelfTest）
 build.sh                dotnet build 封装
 ```
+
+## 图纸清洗（ADIMCLEAN / AutoDim.Core）
+
+复杂图纸（扫描矢量化、碎线段、重复重叠图元）无法直接标注，先用清洗管线把图"读干净"：
+
+```text
+脏线段 → 端点吸附 + 去重 → 共线微段合并 → 平面图闭合轮廓提取 + 圆去重
+```
+
+- `ADIMCLEAN` 命令：对选中对象/整图执行清洗，把闭合轮廓与去重圆绘制到 `ADIM_CLEAN` 图层，并打印统计。
+- `AutoDim.Core`：纯 C# 几何库（无 AutoCAD 依赖、无 NuGet 包），可独立自测：
+  `dotnet run --project test/AutoDim.Core.SelfTest`（覆盖去重/微段合并/内外孔双面/圆去重）。
+- 已知限制：像 test.dwg 这类矢量化碎片图**没有全局闭合外轮廓**，清洗按"逐特征闭合"处理；
+  填充/剖面线笔触的识别（噪声过滤）与语义分类是下一步工作。
 
 ## 编译
 
@@ -83,6 +99,7 @@ bash test/run-tests.sh
 | `ADIMSCALE` | 设置/清除固定 Dimscale（默认按包围盒自适应 0.5~3.0） |
 | `ADIMCFG` | 切换标注类别开关（总体/分段/孔圆/全部/清空），持久化到图 |
 | `ADIMDEBUG` | 打印多段线几何诊断信息，用于核对标注算法 |
+| `ADIMCLEAN` | 图纸清洗：去重/微段合并/闭合轮廓提取，结果绘制到 ADIM_CLEAN 图层 |
 
 ## 路线图（五个阶段代码已完成，后续重点在鲁棒性）
 
@@ -92,4 +109,5 @@ bash test/run-tests.sh
 - [x] Phase 3 轮廓各段尺寸（直线段对齐 / 圆弧半径）
 - [x] Phase 4 相邻边夹角（任意倾斜多边形模式输出夹角；正交路径按 GB/T 4458.4 不重复标角度）
 - [x] Phase 5 打磨（防重叠清理、配置项、自动比例、幂等刷新）
+- [x] 复杂图纸第一步：几何清洗库 AutoDim.Core + ADIMCLEAN 命令（去重/合并/逐特征闭合）
 - [ ] 复杂图纸鲁棒性：多轮廓 / 相交 / 杂乱线框的识别与尺寸避让
