@@ -9,7 +9,8 @@ public sealed record CleanOptions(
     double AngleBucketDeg = 0.5,
     double NodeTol = 0.05,
     double MinKeepLength = 3.0,
-    double MinFaceArea = 1.0);
+    double MinFaceArea = 1.0,
+    double MaxFaceThinness = 60.0);
 
 /// <summary>一个闭合面：顶点 + 每边 bulge（非 0 表示圆弧边，AutoCAD bulge 约定）。</summary>
 public sealed record FaceData(Point2D[] Points, double[] Bulges);
@@ -81,6 +82,16 @@ public static class ContourExtractor
         // 丢弃过小的碎环（填充笔触交叉产生的微型面，不是可标注特征）
         if (o.MinFaceArea > 0)
             uniqueFaces = uniqueFaces.Where(f => FaceArea(f.Points) >= o.MinFaceArea).ToList();
+        // 丢弃细长碎面（周长²/面积过大 = 长条/交叉产生的薄片，正方形≈16、圆≈12.6）
+        if (o.MaxFaceThinness > 0)
+        {
+            uniqueFaces = uniqueFaces.Where(f =>
+            {
+                double area = FaceArea(f.Points);
+                double per = Perimeter(f.Points);
+                return area > 1e-9 && per * per / area <= o.MaxFaceThinness;
+            }).ToList();
+        }
 
         // 圆去重：同圆心 + 同半径(取整)视为重复
         var uniqueCircles = new List<(Point2D, double)>();
@@ -106,6 +117,14 @@ public static class ContourExtractor
             area += p1.X * p2.Y - p2.X * p1.Y;
         }
         return Math.Abs(area) / 2.0;
+    }
+
+    private static double Perimeter(IReadOnlyList<Point2D> face)
+    {
+        double per = 0;
+        for (int i = 0; i < face.Count; i++)
+            per += face[i].DistanceTo(face[(i + 1) % face.Count]);
+        return per;
     }
 
     private static (Point2D, Point2D) Canonical(Point2D a, Point2D b) =>

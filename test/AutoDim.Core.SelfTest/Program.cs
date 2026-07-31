@@ -107,5 +107,12 @@ Check(Math.Abs(ContourExtractor.FaceArea(r10.Faces[0].Points) - 98.0) < 1e-6, "f
 bool hasArc = r10.Faces[0].Bulges.Any(b => Math.Abs(Math.Abs(b) - Math.Tan(Math.PI / 8)) < 0.01);
 Check(hasArc, "arc bulge preserved (~0.4142)");
 
+// 11) 细长碎面过滤：20x0.6 长条（周长²/面积≈141 > 60）应被丢弃，正方形(16)保留
+var sliver = new[] { new Point2D(0, 0), new Point2D(20, 0), new Point2D(20, 0.6), new Point2D(0, 0.6) };
+var r11 = ContourExtractor.Process(Edges(sliver), emptyCircles);
+Check(r11.Faces.Count == 0, "thin sliver face dropped");
+var r11b = ContourExtractor.Process(Edges(sq), emptyCircles);
+Check(r11b.Faces.Count == 1, "square kept by thinness filter");
+
 Console.WriteLine(fails == 0 ? "== ALL PASS ==" : $"== {fails} FAILURE(S) ==");
 return fails == 0 ? 0 : 1;

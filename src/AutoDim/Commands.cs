@@ -292,7 +292,13 @@ public sealed class Commands
                     foreach (var ci in g.CircleIndices)
                         gIds.Add(drawnIds[drawnFaceIdx.Count + ci]);
                     if (gIds.Count == 0) continue;
-                    RunEngine(doc, gIds.ToArray(), new AutoDimOptions());
+                    // 纯圆孔组：只标孔（直径+定位），不标无意义的"总体外形"
+                    if (g.FaceIndices.Count == 0)
+                        RunEngine(doc, gIds.ToArray(),
+                                  new AutoDimOptions { Categories = DimCategory.Holes },
+                                  usePersistedCategories: false);
+                    else
+                        RunEngine(doc, gIds.ToArray(), new AutoDimOptions());
                 }
             }
         }
@@ -567,7 +573,8 @@ public sealed class Commands
         RunEngine(doc, ids, new AutoDimOptions());
     }
 
-    private static void RunEngine(Document doc, ObjectId[] ids, AutoDimOptions opt)
+    private static void RunEngine(Document doc, ObjectId[] ids, AutoDimOptions opt,
+                                  bool usePersistedCategories = true)
     {
         Database db = doc.Database;
         Editor ed = doc.Editor;
@@ -581,9 +588,12 @@ public sealed class Commands
             // 算包围盒(用于 DIMSCALE 自适应 + 各 dimensioner)
             Extents3d? extBox = Cad.GeometryUtils.CombinedExtents(tr, ids);
 
-            // 从持久化配置读类别开关覆盖 opt.Categories
-            int cats = Cad.OptionsStore.ReadCategories(db, tr);
-            opt.Categories = (DimCategory)cats;
+            // 从持久化配置读类别开关覆盖 opt.Categories（除非调用方明确不读）
+            if (usePersistedCategories)
+            {
+                int cats = Cad.OptionsStore.ReadCategories(db, tr);
+                opt.Categories = (DimCategory)cats;
+            }
 
             ObjectId layerId = LayerHelper.EnsureLayer(db, tr, opt.LayerName);
             // 专属标注样式 ADIM(文字/箭头/比例固化)，不碰用户全局变量
