@@ -26,7 +26,7 @@
 
 ```
 src/AutoDim/            插件源码
-  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN）
+  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN）
   SampleBuilder.cs      生成测试样例图（ADIMSAMPLE）
   Selection/            三种触发方式取集
   Dimensioning/         标注引擎与各类别 Dimensioner（总体/分段/孔圆/坐标/任意多边形）

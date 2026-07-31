@@ -27,7 +27,7 @@ public sealed class PluginInit : IExtensionApplication
         Document? doc = AcApp.DocumentManager.MdiActiveDocument;
         doc?.Editor.WriteMessage(
             "\nAutoDim 已加载。命令: AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / " +
-            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN\n");
+            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN\n");
     }
 
     public void Terminate() { }
