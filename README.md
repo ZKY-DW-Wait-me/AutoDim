@@ -52,6 +52,8 @@ build.sh                dotnet build 封装
 
 - `ADIMCLEAN` 命令：对选中对象/整图执行清洗，把闭合轮廓与去重圆绘制到 `ADIM_CLEAN` 图层，并打印统计。
   清洗完成后会对清洗结果**按特征组分别自动标注**（一条龙：脏图 → 干净几何 → 逐特征标注）。
+  也可在 `ADIMCFG` 里选 `C` 开启"自动清洗"：之后 `AUTODIM`/`ADIMALL`/`ADIMWIN`/`ADIMSEL`
+  会先自动清洗再标注，一条命令走完。
 - 圆弧整段以 bulge 保留（不采样成碎弦），清洗后的轮廓仍含圆角，可自动标注圆角半径（`arc=` 计数）。
 - `AutoDim.Core`：纯 C# 几何库（无 AutoCAD 依赖、无 NuGet 包），可独立自测：
   `dotnet run --project test/AutoDim.Core.SelfTest`（覆盖去重/微段合并/内外孔双面/圆去重）。
@@ -123,7 +125,7 @@ bash test/run-tests.sh
 | `ADIMSAMPLE` | 生成测试图（100×60 矩形 + 2 孔 R8） |
 | `ADIMCOORD` | 坐标标注：对任意倾斜多边形按最左下顶点引 X/Y 坐标（复杂板类推荐画法） |
 | `ADIMSCALE` | 设置/清除固定 Dimscale（默认按包围盒自适应 0.5~3.0） |
-| `ADIMCFG` | 切换标注类别开关（总体/分段/孔圆/全部/清空），持久化到图 |
+| `ADIMCFG` | 切换标注类别开关（总体/分段/孔圆/全部/清空）+ 自动清洗开关(C)，持久化到图 |
 | `ADIMDEBUG` | 打印多段线几何诊断信息，用于核对标注算法 |
 | `ADIMCLEAN` | 图纸清洗+标注一条龙：去重/微段合并/闭合轮廓提取 → 绘制到 ADIM_CLEAN 图层 → 自动标注 |
 

@@ -74,7 +74,7 @@ public sealed class Commands
             return;
         }
 
-        RunEngine(doc, ids, new AutoDimOptions());
+        RunAutoOrClean(doc, ids);
     }
 
     /// <summary>整图自动标注。</summary>
@@ -97,7 +97,7 @@ public sealed class Commands
                           ?? SelectionService.Acquire(ed, TriggerMode.Selection);
         if (ids == null) { ed.WriteMessage("\n未选择对象。\n"); return; }
 
-        RunEngine(doc, ids, new AutoDimOptions());
+        RunAutoOrClean(doc, ids);
     }
 
     /// <summary>生成测试图（100×60 矩形 + 2 孔）。</summary>
@@ -165,7 +165,6 @@ public sealed class Commands
         Document? doc = AcApp.DocumentManager.MdiActiveDocument;
         if (doc == null) return;
         Editor ed = doc.Editor;
-        Database db = doc.Database;
 
         ObjectId[]? ids = SelectionService.Acquire(ed, TriggerMode.Pickfirst)
                           ?? SelectionService.Acquire(ed, TriggerMode.All);
@@ -174,7 +173,14 @@ public sealed class Commands
             ed.WriteMessage("\n未选择到有效对象。\n");
             return;
         }
+        CleanAndDim(doc, ids);
+    }
 
+    /// <summary>清洗 + 绘制到 ADIM_CLEAN + 按特征组标注（ADIMCLEAN 与自动清洗开关共用）。</summary>
+    private static void CleanAndDim(Document doc, ObjectId[] ids)
+    {
+        Editor ed = doc.Editor;
+        Database db = doc.Database;
         var segs = new List<Seg>();
         var circles = new List<(CPoint Center, double Radius)>();
         try
@@ -376,12 +382,29 @@ public sealed class Commands
                         $"Holes={curCat.HasFlag(DimCategory.Holes)} " +
                         $"Angular={curCat.HasFlag(DimCategory.Angular)}");
 
-        var kw = new PromptKeywordOptions("\n切换类别 [总体(O)/分段(E)/孔圆(H)/全部(ALL)/清空(NONE)]: ");
-        kw.Keywords.Add("O"); kw.Keywords.Add("E"); kw.Keywords.Add("H"); kw.Keywords.Add("ALL"); kw.Keywords.Add("NONE");
+        bool autoClean;
+        using (Transaction tr1 = db.TransactionManager.StartTransaction())
+        {
+            autoClean = Cad.OptionsStore.ReadAutoClean(db, tr1);
+            tr1.Commit();
+        }
+        ed.WriteMessage($"\n自动清洗开关: {(autoClean ? "开" : "关")} " +
+                        "(开启后 AUTODIM/ADIMALL/ADIMWIN/ADIMSEL 先清洗再标注)");
+
+        var kw = new PromptKeywordOptions(
+            "\n设置 [总体(O)/分段(E)/孔圆(H)/全部(ALL)/清空(NONE)/清洗开关(C)]: ");
+        kw.Keywords.Add("O"); kw.Keywords.Add("E"); kw.Keywords.Add("H");
+        kw.Keywords.Add("ALL"); kw.Keywords.Add("NONE"); kw.Keywords.Add("C");
         kw.AllowNone = true;
         var kr = ed.GetKeywords(kw);
         if (kr.Status == PromptStatus.OK)
         {
+            if (kr.StringResult == "C")
+            {
+                Cad.OptionsStore.WriteAutoClean(db, !autoClean);
+                ed.WriteMessage($"\n自动清洗已{(autoClean ? "关闭" : "开启")}（持久化到本图）。\n");
+                return;
+            }
             int next = kr.StringResult switch
             {
                 "O"    => cur ^ (int)DimCategory.Overall,
@@ -586,7 +609,22 @@ public sealed class Commands
         ObjectId[]? ids = SelectionService.Acquire(ed, mode);
         if (ids == null) { ed.WriteMessage("\n未选择到有效对象。\n"); return; }
 
-        RunEngine(doc, ids, new AutoDimOptions());
+        RunAutoOrClean(doc, ids);
+    }
+
+    /// <summary>根据"自动清洗"开关决定走 清洗+标注 还是 直接标注。</summary>
+    private static void RunAutoOrClean(Document doc, ObjectId[] ids)
+    {
+        bool autoClean;
+        using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+        {
+            autoClean = Cad.OptionsStore.ReadAutoClean(doc.Database, tr);
+            tr.Commit();
+        }
+        if (autoClean)
+            CleanAndDim(doc, ids);
+        else
+            RunEngine(doc, ids, new AutoDimOptions());
     }
 
     private static void RunEngine(Document doc, ObjectId[] ids, AutoDimOptions opt,

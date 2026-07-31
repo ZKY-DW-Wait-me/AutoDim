@@ -9,6 +9,7 @@ namespace AutoDim.Cad;
 internal static class OptionsStore
 {
     private const string NodKey = "AutoDim_Options";
+    private const string AutoCleanKey = "AutoDim_AutoClean";
 
     /// <summary>读持久化的类别开关；没设过返回 All(默认全开)。</summary>
     public static int ReadCategories(Database db, Transaction tr)
@@ -38,6 +39,39 @@ internal static class OptionsStore
             var rec = new Xrecord();
             rec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int32, categories));
             ObjectId id = nod.SetAt(NodKey, rec);
+            tr.AddNewlyCreatedDBObject(rec, true);
+        }
+        tr.Commit();
+    }
+
+    /// <summary>读"自动清洗"开关（默认关）。</summary>
+    public static bool ReadAutoClean(Database db, Transaction tr)
+    {
+        var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+        if (!nod.Contains(AutoCleanKey)) return false;
+        if (tr.GetObject(nod.GetAt(AutoCleanKey), OpenMode.ForRead) is not Xrecord rec) return false;
+        foreach (TypedValue tv in rec.Data)
+            if (tv.TypeCode == (int)DxfCode.Int32 && tv.Value is int i)
+                return i != 0;
+        return false;
+    }
+
+    /// <summary>写"自动清洗"开关到 NOD。</summary>
+    public static void WriteAutoClean(Database db, bool on)
+    {
+        using Transaction tr = db.TransactionManager.StartTransaction();
+        var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+        if (nod.Contains(AutoCleanKey))
+        {
+            var rec = (Xrecord)tr.GetObject(nod.GetAt(AutoCleanKey), OpenMode.ForWrite);
+            rec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int32, on ? 1 : 0));
+        }
+        else
+        {
+            nod.UpgradeOpen();
+            var rec = new Xrecord();
+            rec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int32, on ? 1 : 0));
+            nod.SetAt(AutoCleanKey, rec);
             tr.AddNewlyCreatedDBObject(rec, true);
         }
         tr.Commit();
