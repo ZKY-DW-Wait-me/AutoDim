@@ -3,7 +3,12 @@
 用 C# / .NET 8 开发的 AutoCAD 2025 插件，自动为轮廓、孔/圆等生成尺寸标注。分阶段交付，目标覆盖：
 ① 总体外形尺寸 ② 轮廓各段尺寸 ③ 孔/圆直径与定位 ④ 相邻边夹角；支持三种触发方式：先选对象、整图、框选。
 
-当前进度：**Phase 0（脚手架）+ Phase 1（总体外形尺寸 + 三种触发方式）**。项目仍处于早期阶段，欢迎接手继续开发，路线图见文末。
+当前进度：**五个阶段（Phase 0~5）的代码均已实现**：总体外形尺寸、轮廓分段、孔/圆直径与定位、
+相邻边夹角（任意倾斜多边形模式）、防重叠清理 / 配置项 / 自动比例 / 幂等刷新等打磨。
+
+**已知限制**：目前只对规整、简单的图纸（矩形+孔、单个多边形等）标注可靠；复杂图纸
+（多轮廓相交、杂乱线框、重复线等）仍无法稳定自动标注——这也是项目暂停个人开发的直接原因。
+仓库保持公开，欢迎有能力的人接手继续完善，路线图见文末。
 
 ---
 
@@ -21,10 +26,10 @@
 
 ```
 src/AutoDim/            插件源码
-  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE）
+  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG）
   SampleBuilder.cs      生成测试样例图（ADIMSAMPLE）
   Selection/            三种触发方式取集
-  Dimensioning/         标注引擎与各类别 Dimensioner（当前：总体外形）
+  Dimensioning/         标注引擎与各类别 Dimensioner（总体/分段/孔圆/坐标/任意多边形）
   Cad/                  图层、标注样式助手
   Config/               运行选项
 deploy/                 AutoCAD ApplicationPlugins 自动加载清单
@@ -50,7 +55,7 @@ bash build.sh Release    # Release
 bash test/run-tests.sh
 ```
 脚本会：编译 → 用 `accoreconsole.exe` 加载 DLL、生成 100×60 矩形+2 孔的样例、对整图执行标注 →
-断言输出包含 `ADIMSAMPLE:`、`overall=2`、`total=2`，通过则打印 `== PASS ==`。
+断言输出包含 `ADIMSAMPLE:`、`AUTODIM:` 且 `total>0`，通过则打印 `== PASS ==`。
 
 ## 在 AutoCAD 中手动加载试用
 
@@ -62,6 +67,7 @@ bash test/run-tests.sh
    - `ADIMSAMPLE` 生成一张测试图；
    - `AUTODIM`：若命令前已选对象则直接标注，否则按提示选择 `选择对象(S)/整图(A)/窗口(W)`；
    - `ADIMALL` 整图、`ADIMWIN` 框选、`ADIMSEL` 选中对象。
+   - 倾斜/异形零件可试 `ADIMCOORD`（坐标标注）或 `ADIMSCALE`（固定比例）、`ADIMCFG`（类别开关）。
    - 标注生成在 `ADIM` 图层（绿色），一次 `U` 可整批撤销。
 
 ## 命令一览
@@ -73,12 +79,17 @@ bash test/run-tests.sh
 | `ADIMWIN` | 框选区域内标注 |
 | `ADIMSEL` | 对选中对象标注 |
 | `ADIMSAMPLE` | 生成测试图（100×60 矩形 + 2 孔 R8） |
+| `ADIMCOORD` | 坐标标注：对任意倾斜多边形按最左下顶点引 X/Y 坐标（复杂板类推荐画法） |
+| `ADIMSCALE` | 设置/清除固定 Dimscale（默认按包围盒自适应 0.5~3.0） |
+| `ADIMCFG` | 切换标注类别开关（总体/分段/孔圆/全部/清空），持久化到图 |
+| `ADIMDEBUG` | 打印多段线几何诊断信息，用于核对标注算法 |
 
-## 路线图
+## 路线图（五个阶段代码已完成，后续重点在鲁棒性）
 
 - [x] Phase 0 脚手架 / 可加载骨架 / 无界面测试循环
 - [x] Phase 1 总体外形尺寸 + 三种触发方式
-- [ ] Phase 2 孔/圆 直径 + 定位
-- [ ] Phase 3 轮廓各段尺寸（直线段对齐 / 圆弧半径）
-- [ ] Phase 4 相邻边夹角
-- [ ] Phase 5 打磨（防重叠、配置项、自动比例、幂等刷新）
+- [x] Phase 2 孔/圆 直径 + 定位
+- [x] Phase 3 轮廓各段尺寸（直线段对齐 / 圆弧半径）
+- [x] Phase 4 相邻边夹角（任意倾斜多边形模式输出夹角；正交路径按 GB/T 4458.4 不重复标角度）
+- [x] Phase 5 打磨（防重叠清理、配置项、自动比例、幂等刷新）
+- [ ] 复杂图纸鲁棒性：多轮廓 / 相交 / 杂乱线框的识别与尺寸避让

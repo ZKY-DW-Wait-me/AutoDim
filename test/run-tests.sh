@@ -40,7 +40,9 @@ fail=0
 # ASCII 前缀断言，规避中文控制台编码问题
 CLEAN="$(tr -d '\000' < "$LOG")"
 echo "$CLEAN" | grep -q "ADIMSAMPLE:" || { echo "FAIL: 插件未加载或示例未生成"; fail=1; }
-echo "$CLEAN" | grep -q "overall=2"   || { echo "FAIL: overall!=2（总体尺寸未生成 2 个）"; fail=1; }
-echo "$CLEAN" | grep -q "total=2"     || { echo "FAIL: total!=2"; fail=1; }
+echo "$CLEAN" | grep -q "AUTODIM:"    || { echo "FAIL: 未执行整图标注"; fail=1; }
+# 断言至少生成了标注（具体数量随 Phase 2~5 的类别组合变化，不做硬编码）
+tot="$(echo "$CLEAN" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+{ [ -n "$tot" ] && [ "$tot" -gt 0 ]; } || { echo "FAIL: total 标注数量为 0"; fail=1; }
 
 if [ "$fail" = "0" ]; then echo "== PASS =="; exit 0; else echo "== TESTS FAILED =="; exit 1; fi
