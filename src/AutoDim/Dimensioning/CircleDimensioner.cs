@@ -27,24 +27,74 @@ internal static class CircleDimensioner
 
         int dia = 0, pos = 0;
 
-        // —— 直径标注：从圆心引径向线，箭头指到圆周，文字覆盖为 ⌀直径。
-        // 方向从孔簇质心向外辐射：密集簇中线条散开，减少径向线/文字互压 ——
+        // —— 直径标注：重复直径合并为数量注记（GB 惯例 "N×Ød"）——
+        // 同一直径(0.1mm 精度分桶)：桶内只有 1 个孔 -> 正常引线标 Ø；桶内 ≥2 个 ->
+        // 只出 MText 注记 "N×Ød"（test.dwg 实测 442 个直径标注只有 6 种直径，
+        // 128×Ø2.75 这类重复标注是 Radial+Rotated 重叠的最大来源；且多桶代表孔的
+        // 引线方向平行、文字互相叠压，故多桶不再出代表孔引线）。
         double cx = 0, cy = 0;
         foreach (var c in circles) { cx += c.Center.X; cy += c.Center.Y; }
         cx /= circles.Count;
         cy /= circles.Count;
         var centroid = new Point3d(cx, cy, 0);
+        var buckets = new Dictionary<int, List<Circle>>();
         foreach (var c in circles)
         {
-            var to = c.Center - centroid;
-            Vector3d dir = to.Length > 1e-9
-                ? to.GetNormal()
-                : new Vector3d(0.70710678118, 0.70710678118, 0.0);
-            Point3d chordPt = c.Center + dir * c.Radius;   // 圆周上的点（箭头位置）
-            string txt = "%%c" + FormatLen(c.Radius * 2.0); // %%c = ⌀
-            DimUtil.Append(db, tr, space,
-                new RadialDimension(c.Center, chordPt, c.Radius * 0.8, txt, dimStyleId), dimStyleId, layerId);
-            dia++;
+            int key = (int)System.Math.Round(c.Radius * 20.0);   // 直径 0.1mm 精度
+            if (!buckets.TryGetValue(key, out var list))
+                buckets[key] = list = new List<Circle>();
+            list.Add(c);
+        }
+
+        // 单例桶代表孔：自然方向角按最小夹角(90°)展开成扇形。
+        // 同一组多个不同直径孔(各 1 个)若都朝孔簇质心外侧引线，角度几乎平行，
+        // 文字会叠在一起(实测 Radial+Radial 撞车主力)，先在这里错开。
+        const double MinRepSep = 90.0 * System.Math.PI / 180.0;
+        var singles = new List<(Circle C, double A)>();
+        foreach (var kv in buckets)
+        {
+            if (kv.Value.Count != 1) continue;
+            var c = kv.Value[0];
+            var dv = c.Center - centroid;
+            double a = dv.Length > 1e-9
+                ? System.Math.Atan2(dv.Y, dv.X)
+                : System.Math.PI * 0.25;
+            singles.Add((c, a));
+        }
+        singles.Sort((x, y) => x.A.CompareTo(y.A));
+        for (int k = 1; k < singles.Count; k++)
+            if (singles[k].A - singles[k - 1].A < MinRepSep)
+                singles[k] = (singles[k].C, singles[k - 1].A + MinRepSep);
+        var repAngles = new Dictionary<Circle, double>();
+        foreach (var s in singles) repAngles[s.C] = s.A;
+
+        double txtH = ReadDimTextHeight(db, tr, dimStyleId);
+        int noteIdx = 0;
+        foreach (var kv in buckets.OrderBy(kv => kv.Key))
+        {
+            var list = kv.Value;
+            if (list.Count == 1)
+            {
+                var c0 = list[0];
+                double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
+                var dir = new Vector3d(System.Math.Cos(ang), System.Math.Sin(ang), 0);
+                Point3d chordPt = c0.Center + dir * c0.Radius;   // 圆周上的点（箭头位置）
+                string txt = "%%c" + FormatLen(c0.Radius * 2.0); // %%c = ⌀
+                DimUtil.Append(db, tr, space,
+                    new RadialDimension(c0.Center, chordPt, c0.Radius * 0.8, txt, dimStyleId), dimStyleId, layerId);
+                dia++;
+            }
+            else if (ext != null)
+            {
+                double bx = 0, by = 0;
+                foreach (var c in list) { bx += c.Center.X; by += c.Center.Y; }
+                bx /= list.Count; by /= list.Count;
+                double midY = (ext.Value.MinPoint.Y + ext.Value.MaxPoint.Y) * 0.5;
+                // 同一组多个直径注记上下错开 2×字高，避免叠压
+                double ny = by + (by < midY ? 1.8 : -1.8) * baseGap + noteIdx * 2.0 * txtH;
+                noteIdx++;
+                AddCountNote(db, tr, space, dimStyleId, layerId, new Point3d(bx, ny, 0), list.Count, list[0].Radius * 2.0);
+            }
         }
 
         if (ext == null) return (dia, pos);
@@ -118,6 +168,34 @@ internal static class CircleDimensioner
         }
 
         return (dia, pos);
+    }
+
+    /// <summary>读取 ADIM 样式实际文字高度(Dimtxt × Dimscale)。</summary>
+    private static double ReadDimTextHeight(Database db, Transaction tr, ObjectId dimStyleId)
+    {
+        try
+        {
+            var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
+            return dst.Dimtxt * dst.Dimscale;
+        }
+        catch { return 2.5; }
+    }
+
+    /// <summary>MText 数量注记 "N×Ød"，文字高度跟随 ADIM 样式，中上位置居中。</summary>
+    private static void AddCountNote(Database db, Transaction tr, BlockTableRecord space,
+        ObjectId dimStyleId, ObjectId layerId, Point3d at, int n, double diameter)
+    {
+        double txtH = ReadDimTextHeight(db, tr, dimStyleId);
+        using var mt = new MText();
+        mt.SetDatabaseDefaults(db);
+        mt.Contents = $"{n}×Ø{FormatLen(diameter)}";
+        mt.TextHeight = txtH;
+        mt.Location = at;
+        mt.Attachment = AttachmentPoint.MiddleCenter;
+        mt.LayerId = layerId;
+        space.AppendEntity(mt);
+        tr.AddNewlyCreatedDBObject(mt, true);
+        Cad.AdimMarker.Mark(db, tr, mt);
     }
 
     /// <summary>相邻位置点间距是否全部 &gt;= MinChainGap（否则链文字互相压）。</summary>

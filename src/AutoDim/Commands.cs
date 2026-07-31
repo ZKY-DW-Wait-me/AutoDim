@@ -27,7 +27,7 @@ public sealed class PluginInit : IExtensionApplication
         Document? doc = AcApp.DocumentManager.MdiActiveDocument;
         doc?.Editor.WriteMessage(
             "\nAutoDim 已加载。命令: AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / " +
-            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN\n");
+            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN / ADIMDUMP\n");
     }
 
     public void Terminate() { }
@@ -334,6 +334,19 @@ public sealed class Commands
 
             if (drawnIds.Count > 0)
             {
+                // 整区清场：在逐组标注前把清洗区域内自产的旧标注全部擦掉。
+                // 6×gap 缓冲区覆盖布局收尾的外推距离(≤2.5×2×gap)，保证重复运行可完整重生成(幂等)，
+                // 同时避免"逐组清场"在相邻组相距很近时误擦对方标注。
+                using (Transaction trP = db.TransactionManager.StartTransaction())
+                {
+                    var btP = (BlockTable)trP.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    var msP = (BlockTableRecord)trP.GetObject(btP[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                    Extents3d? cleanExt = Cad.GeometryUtils.CombinedExtents(trP, drawnIds.ToArray());
+                    double bufP = cleanExt.HasValue ? 6.0 * Cad.GeometryUtils.AutoGap(cleanExt.Value) : 0.0;
+                    PurgeAdimEntities(trP, msP, "ADIM", cleanExt, bufP);
+                    trP.Commit();
+                }
+
                 var groups = FeatureGrouping.GroupFeatures(res.Faces, res.UniqueCircles, gapTol);
                 ed.WriteMessage($"    -> 按 {groups.Count} 个特征组分别标注...\n");
                 foreach (var g in groups)
@@ -347,18 +360,6 @@ public sealed class Commands
                     foreach (var ci in g.CircleIndices)
                         gIds.Add(drawnIds[drawnFaceIdx.Count + ci]);
                     if (gIds.Count == 0) continue;
-
-                    // 组级清场：整组区域只 purge 一次，组内多次 RunEngine 调用互不误擦，
-                    // 也不会有"小面区旧尺寸残留"问题
-                    using (Transaction tr2 = db.TransactionManager.StartTransaction())
-                    {
-                        var bt2 = (BlockTable)tr2.GetObject(db.BlockTableId, OpenMode.ForRead);
-                        var ms2 = (BlockTableRecord)tr2.GetObject(bt2[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-                        Extents3d? gExt = Cad.GeometryUtils.CombinedExtents(tr2, gIds.ToArray());
-                        double buf = gExt.HasValue ? 5.0 * Cad.GeometryUtils.AutoGap(gExt.Value) : 0.0;
-                        PurgeAdimEntities(tr2, ms2, "ADIM", gExt, buf);
-                        tr2.Commit();
-                    }
 
                     // 组标注策略：
                     //   纯孔组       -> 只标孔（直径+定位）
@@ -422,10 +423,30 @@ public sealed class Commands
                         }
                     }
                 }
+                // 布局收尾：整区去重(共享边/重复面被两个面各标一次) + 外推避让(尺寸线沿
+                // 远离被测要素方向外移，上限 2.5×原始偏移，配合 6×gap 清场缓冲区保证幂等)
+                int removedDup = 0, movedAway = 0;
+                using (Transaction trL = db.TransactionManager.StartTransaction())
+                {
+                    Extents3d? cleanExt = Cad.GeometryUtils.CombinedExtents(trL, drawnIds.ToArray());
+                    if (cleanExt.HasValue)
+                    {
+                        double gapL = Cad.GeometryUtils.AutoGap(cleanExt.Value);
+                        (removedDup, movedAway) = Dimensioning.LayoutSolver.Resolve(db, trL, cleanExt.Value, gapL);
+                    }
+                    else
+                    {
+                        removedDup = Dimensioning.LayoutSolver.Dedupe(db, trL);
+                    }
+                    trL.Commit();
+                }
+                if (removedDup > 0 || movedAway > 0)
+                    ed.WriteMessage($"    -> 布局收尾: 去重 {removedDup} 个 / 外推避让 {movedAway} 次\n");
                 var (overlaps, overlapTop) = CountDimOverlaps(db);
+                var (textHits, textTop) = CountDimTextOverlaps(db);
                 ed.WriteMessage(
-                    $"    -> 合计: {dimmedGroups} 组 / {sumDims} 个标注 / ADIM 标注重叠对 {overlaps} " +
-                    $"[{overlapTop}]\n");
+                    $"    -> 合计: {dimmedGroups} 组 / {sumDims} 个标注 / " +
+                    $"ADIM 文字撞车 {textHits} 对 [AABB 重叠 {overlaps}] [{overlapTop}]\n");
             }
         }
         catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -437,7 +458,7 @@ public sealed class Commands
     /// <summary>辅助线图层默认不参与轮廓提取（中心线/虚线/点划线等）。</summary>
     private static bool IsAuxLayer(string layer)
     {
-        if (layer is "ADIM" or "ADIM_CLEAN" or "ADIM_CENTER" or "Defpoints") return true;
+        if (layer is "ADIM" or "ADIM_CLEAN" or "ADIM_CLEAN_L" or "ADIM_CENTER" or "Defpoints") return true;
         return layer.Contains("中心线") || layer.Contains("虚线") || layer.Contains("点划线");
     }
 
@@ -605,7 +626,14 @@ public sealed class Commands
             if (tr.GetObject(id, OpenMode.ForRead) is not Dimension d) continue;
             string sty = d.DimensionStyle.ToString();
             string geo = DescribeDim(d);
-            ed.WriteMessage($"\n  [{k}] {d.GetType().Name} text=\"{d.DimensionText}\" style={sty} {geo} txtRot={d.TextRotation:F2} layer={d.Layer}");
+            string ext = "";
+            try
+            {
+                var g = d.GeometricExtents;
+                ext = $" ext=({g.MinPoint.X:F1},{g.MinPoint.Y:F1})-({g.MaxPoint.X:F1},{g.MaxPoint.Y:F1})";
+            }
+            catch { }
+            ed.WriteMessage($"\n  [{k}] {d.GetType().Name} text=\"{d.DimensionText}\" style={sty} {geo}{ext} txtRot={d.TextRotation:F2} layer={d.Layer}");
             k++;
         }
         tr.Commit();
@@ -667,6 +695,62 @@ public sealed class Commands
         ed.WriteMessage("\n");
     }
 
+    /// <summary>
+    /// 诊断命令（非交互，供无界面基准/日志分析）：仅输出 ADIM 图层所有 Dimension 的
+    /// 类型/文字/测量点/尺寸线位置/外接框，不修改任何内容。布局优化时用于核对重叠明细。
+    /// </summary>
+    [CommandMethod("ADIMDUMP", CommandFlags.Modal)]
+    public void AdimDump()
+    {
+        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
+        if (doc == null) return;
+        Database db = doc.Database;
+        Editor ed = doc.Editor;
+
+        using Transaction tr = db.TransactionManager.StartTransaction();
+        var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+        var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+        int k = 0;
+        foreach (ObjectId id in ms)
+        {
+            if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
+            if (ent.Layer != "ADIM") continue;
+            if (ent is Dimension d)
+            {
+                string ext = "";
+                try
+                {
+                    var g = d.GeometricExtents;
+                    ext = $" ext=({g.MinPoint.X:F2},{g.MinPoint.Y:F2})-({g.MaxPoint.X:F2},{g.MaxPoint.Y:F2})";
+                }
+                catch { }
+                string txtBox = "";
+                var tb = DimTextExtents(tr, d);
+                if (tb.HasValue)
+                    txtBox = $" txtBox=({tb.Value.MinPoint.X:F2},{tb.Value.MinPoint.Y:F2})-({tb.Value.MaxPoint.X:F2},{tb.Value.MaxPoint.Y:F2})";
+                else
+                    txtBox = " txtBox=(null)";
+                ed.WriteMessage(
+                    $"\n  [{k}] {d.GetType().Name} text=\"{d.DimensionText}\" {DescribeDim(d)}{ext}{txtBox} " +
+                    $"rot={d.TextRotation:F2} layer={d.Layer}");
+            }
+            else if (ent is MText mt && Cad.AdimMarker.IsMarked(mt))
+            {
+                string mExt = "";
+                try
+                {
+                    var g = mt.GeometricExtents;
+                    mExt = $" ext=({g.MinPoint.X:F2},{g.MinPoint.Y:F2})-({g.MaxPoint.X:F2},{g.MaxPoint.Y:F2})";
+                }
+                catch { }
+                ed.WriteMessage($"\n  [{k}] CountNote text=\"{mt.Contents}\"{mExt} layer={mt.Layer}");
+            }
+            k++;
+        }
+        tr.Commit();
+        ed.WriteMessage($"\nADIMDUMP: {k} 个标注\n");
+    }
+
     /// <summary>按子类取标注关键坐标(尺寸界线起止+尺寸线位置)，基类 Dimension 无这些属性。</summary>
     private static string DescribeDim(Dimension d)
     {
@@ -725,7 +809,7 @@ public sealed class Commands
             try { ent = tr.GetObject(id, OpenMode.ForRead) as Entity; }
             catch { continue; }
             if (ent == null) continue;
-            if (ent is not Dimension && ent is not Line) continue;
+            if (ent is not Dimension && ent is not Line && ent is not MText) continue;
             if (ent.Layer != adimLayer && ent.Layer != "ADIM_CENTER") continue;
             // 只删自己生成的(带 AUTODIM 标记)——用户手标的保留
             if (!Cad.AdimMarker.IsMarked(ent)) continue;
@@ -877,6 +961,87 @@ public sealed class Commands
     private static bool BoxContains(Extents3d box, Point3d p) =>
         p.X >= box.MinPoint.X && p.X <= box.MaxPoint.X &&
         p.Y >= box.MinPoint.Y && p.Y <= box.MaxPoint.Y;
+
+    /// <summary>统计 ADIM 图层标注【文字实体】之间的真实撞车对数（可读性指标）。
+    /// 尺寸链/投影的 AABB 常互相交叉但图形不接触，用文字框更接近"看起来乱不乱"。</summary>
+    private static (int Count, string Top) CountDimTextOverlaps(Database db)
+    {
+        var boxes = new List<Extents3d?>();
+        var types = new List<string>();
+        var radialCenters = new List<Point3d?>();
+        using (Transaction tr = db.TransactionManager.StartTransaction())
+        {
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            foreach (ObjectId id in ms)
+            {
+                if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
+                if (ent.Layer != "ADIM") continue;
+                if (ent is Dimension d)
+                {
+                    boxes.Add(DimTextExtents(tr, d));
+                    types.Add(d.GetType().Name);
+                    radialCenters.Add(d is RadialDimension rd ? (Point3d?)rd.Center : null);
+                }
+                else if (ent is MText mt && Cad.AdimMarker.IsMarked(mt))
+                {
+                    try { boxes.Add(mt.GeometricExtents); }
+                    catch { boxes.Add(null); }
+                    types.Add("CountNote");
+                    radialCenters.Add(null);
+                }
+            }
+            tr.Commit();
+        }
+        int cnt = 0;
+        var pairCounts = new Dictionary<(string, string), int>();
+        for (int i = 0; i < boxes.Count; i++)
+            for (int j = i + 1; j < boxes.Count; j++)
+            {
+                if (boxes[i] == null || boxes[j] == null) continue;
+                var a = boxes[i]!.Value; var b = boxes[j]!.Value;
+                double ix = System.Math.Min(a.MaxPoint.X, b.MaxPoint.X) - System.Math.Max(a.MinPoint.X, b.MinPoint.X);
+                double iy = System.Math.Min(a.MaxPoint.Y, b.MaxPoint.Y) - System.Math.Max(a.MinPoint.Y, b.MinPoint.Y);
+                if (ix <= 0.05 || iy <= 0.05) continue;
+                // 同一孔的直径文字与定位延伸线不算撞车（AABB 层面的既有排除规则）
+                if (radialCenters[i] is Point3d ci && BoxContains(b, ci)) continue;
+                if (radialCenters[j] is Point3d cj && BoxContains(a, cj)) continue;
+                cnt++;
+                var key = string.CompareOrdinal(types[i], types[j]) <= 0
+                    ? (types[i], types[j]) : (types[j], types[i]);
+                pairCounts[key] = pairCounts.GetValueOrDefault(key) + 1;
+            }
+        var top = pairCounts.OrderByDescending(kv => kv.Value).Take(6)
+                            .Select(kv => $"{kv.Key.Item1}+{kv.Key.Item2}:{kv.Value}");
+        return (cnt, string.Join(" ", top));
+    }
+
+    /// <summary>取标注块里的文字实体(WCS)外接框；找不到返回 null。</summary>
+    private static Extents3d? DimTextExtents(Transaction tr, Dimension d)
+    {
+        try
+        {
+            // 优先用 Dimension 自带文字位置与尺寸(DimBlockId 才是标注匿名块；BlockId 是父级块引用)
+            var pos = d.TextPosition;
+            var size = d.TextDefinedSize;
+            if (size.X > 1e-9 && size.Y > 1e-9)
+            {
+                return new Extents3d(
+                    new Point3d(pos.X - size.X * 0.5, pos.Y - size.Y * 0.5, 0),
+                    new Point3d(pos.X + size.X * 0.5, pos.Y + size.Y * 0.5, 0));
+            }
+            if (tr.GetObject(d.DimBlockId, OpenMode.ForRead) is not BlockTableRecord blk) return null;
+            foreach (ObjectId bid in blk)
+            {
+                if (tr.GetObject(bid, OpenMode.ForRead) is DBText txt)
+                    return txt.GeometricExtents;
+                if (tr.GetObject(bid, OpenMode.ForRead) is MText mt)
+                    return mt.GeometricExtents;
+            }
+        }
+        catch { }
+        return null;
+    }
 
     /// <summary>仅当两个外接框有正面积交集(而非共享边/点)才算重叠。</summary>
     private static bool BoxesOverlapArea(Extents3d a, Extents3d b, double eps = 0.01)

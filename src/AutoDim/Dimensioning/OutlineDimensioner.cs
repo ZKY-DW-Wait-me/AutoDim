@@ -26,8 +26,9 @@ internal static class OutlineDimensioner
         Extents3d? ext = null)
     {
         int seg = 0, arc = 0;
-        // 短碎边不标：相对该轮廓尺度自适应（0.35×偏移量），过滤矢量化噪声的亚毫米/毫米级碎段
-        double minSegLen = System.Math.Max(0.5, baseGap * 0.35);
+        // 短碎边不标：相对该轮廓尺度自适应（0.35×偏移量），下限 2mm——
+        // 过滤矢量化噪声的亚毫米/毫米级碎段（test.dwg 的 1.25mm 级分段即此类）
+        double minSegLen = System.Math.Max(2.0, baseGap * 0.35);
 
         foreach (var id in ids)
         {
@@ -125,11 +126,13 @@ internal static class OutlineDimensioner
         }
 
         // 斜边：直角三角形，自由度=2。GB/T 4458.4：斜边已由直角坐标(dx,dy)定义时不得标角度
-        // (角度冗余+四舍五入致数值矛盾)。所以斜边永远只标两个直角边(脏的带小数)，绝不标夹角。
+        // (角度冗余+四舍五入致数值矛盾)。但"水平投影+垂直投影"双投影的尺寸界线盒在角部
+        // 必然相交（实测是 Rotated+Rotated 重叠最大来源），改为只标较大的那个直角边(主投影)，
+        // 另一坐标由闭合尺寸链隐含；绝不标夹角。
         double dxV = d.X, dyV = d.Y;
         double dxAbs = System.Math.Abs(dxV), dyAbs = System.Math.Abs(dyV);
-        AddProjectionDims(db, tr, space, a, b, centroid, dxAbs, dyAbs, dimStyleId, layerId, baseGap);
-        return 2;
+        AddDominantProjection(db, tr, space, a, b, centroid, dxAbs, dyAbs, dimStyleId, layerId, baseGap);
+        return 1;
     }
 
     /// <summary>沿边方向 AlignedDimension，朝外侧偏移；text 传 null 则用默认(显示测量值)。</summary>
@@ -151,10 +154,11 @@ internal static class OutlineDimensioner
         DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, text);
     }
 
-    /// <summary>斜边的水平投影 + 垂直投影两个 RotatedDimension(模式 A)。
-    /// 排版关键：两条尺寸线分放斜边【法线方向】外侧，但垂直投影比水平投影外推更远(2.0×baseGap vs 1.0×)，
-    /// 避免两者延伸线在角点附近交叉、文字撞车。垂直尺寸文字强制贴尺寸线左侧(TextRotation=-90°)。</summary>
-    private static void AddProjectionDims(Database db, Transaction tr, BlockTableRecord space,
+    /// <summary>斜边的单一主投影 RotatedDimension(模式 A')：
+    /// 浅斜边(dx≥dy)标水平投影(1.0×baseGap)、陡斜边标垂直投影(2.0×baseGap)，
+    /// 保持原双投影时代的排布距离，避免靠近轮廓与分段/径向标注互压。
+    /// 垂直尺寸文字强制贴尺寸线左侧(TextRotation=-90°，GB 垂直尺寸惯例)。</summary>
+    private static void AddDominantProjection(Database db, Transaction tr, BlockTableRecord space,
         Point2d a, Point2d b, Point2d centroid, double dx, double dy,
         ObjectId dimStyleId, ObjectId layerId, double baseGap)
     {
@@ -163,22 +167,31 @@ internal static class OutlineDimensioner
         Point2d mid = a + d * 0.5;
         if (n2.DotProduct(centroid - mid) > 0) n2 = -n2;   // 翻到外侧
 
-        // 水平投影：尺寸线水平，y 放斜边 y 范围外侧，距斜边 1.0×baseGap(近)
-        double yH = n2.Y > 0 ? System.Math.Max(a.Y, b.Y) + 1.0 * baseGap : System.Math.Min(a.Y, b.Y) - 1.0 * baseGap;
-        var pH1 = new Point3d(a.X, a.Y, 0);
-        var pH2 = new Point3d(b.X, b.Y, 0);
-        var dimH = new RotatedDimension(0.0, pH1, pH2, new Point3d((a.X + b.X) * 0.5, yH, 0), "", dimStyleId);
-        DimUtil.Append(db, tr, space, dimH, dimStyleId, layerId, FormatLen(dx));
-
-        // 垂直投影：尺寸线垂直，x 放斜边 x 范围外侧，距斜边 2.0×baseGap(远，避让水平投影延伸线)
-        double xV = n2.X > 0 ? System.Math.Max(a.X, b.X) + 2.0 * baseGap : System.Math.Min(a.X, b.X) - 2.0 * baseGap;
-        var pV1 = new Point3d(a.X, a.Y, 0);
-        var pV2 = new Point3d(b.X, b.Y, 0);
-        var dimV = new RotatedDimension(System.Math.PI * 0.5, pV1, pV2, new Point3d(xV, (a.Y + b.Y) * 0.5, 0), "", dimStyleId);
-        DimUtil.Append(db, tr, space, dimV, dimStyleId, layerId, FormatLen(dy));
-        // 垂直尺寸文字贴尺寸线左侧、字头朝左(GB 垂直尺寸惯例)，避免文字骑在尺寸线上被穿过
-        dimV.TextRotation = -System.Math.PI * 0.5;
-        dimV.RecomputeDimensionBlock(true);
+        if (dx >= dy)
+        {
+            // 水平投影(浅斜边主投影)：尺寸线水平，y 放斜边外侧 1.0×baseGap
+            double yH = n2.Y > 0
+                ? System.Math.Max(a.Y, b.Y) + 1.0 * baseGap
+                : System.Math.Min(a.Y, b.Y) - 1.0 * baseGap;
+            var dimH = new RotatedDimension(0.0,
+                new Point3d(a.X, a.Y, 0), new Point3d(b.X, b.Y, 0),
+                new Point3d((a.X + b.X) * 0.5, yH, 0), "", dimStyleId);
+            DimUtil.Append(db, tr, space, dimH, dimStyleId, layerId, FormatLen(dx));
+        }
+        else
+        {
+            // 垂直投影(陡斜边主投影)：尺寸线垂直，x 放斜边外侧 2.0×baseGap
+            double xV = n2.X > 0
+                ? System.Math.Max(a.X, b.X) + 2.0 * baseGap
+                : System.Math.Min(a.X, b.X) - 2.0 * baseGap;
+            var dimV = new RotatedDimension(System.Math.PI * 0.5,
+                new Point3d(a.X, a.Y, 0), new Point3d(b.X, b.Y, 0),
+                new Point3d(xV, (a.Y + b.Y) * 0.5, 0), "", dimStyleId);
+            DimUtil.Append(db, tr, space, dimV, dimStyleId, layerId, FormatLen(dy));
+            // 垂直尺寸文字贴尺寸线左侧、字头朝左(GB 垂直尺寸惯例)，避免文字骑在尺寸线上被穿过
+            dimV.TextRotation = -System.Math.PI * 0.5;
+            dimV.RecomputeDimensionBlock(true);
+        }
     }
 
     // ---------- 圆弧段（引线从圆心穿过弧中点向外，朝向远离邻边交点） ----------

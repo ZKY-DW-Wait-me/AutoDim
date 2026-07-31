@@ -35,6 +35,7 @@ $DLL_WIN
 ADIMSAMPLE
 ADIMALL
 ADIMCLEAN
+ADIMCLEAN
 EOF
 SCR_WIN="$(cygpath -w "$SCR")"
 echo "  -> $SCR"

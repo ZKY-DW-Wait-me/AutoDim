@@ -26,7 +26,7 @@
 
 ```
 src/AutoDim/            插件源码
-  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN）
+  Commands.cs           命令入口 + 加载横幅（AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN / ADIMDUMP）
   SampleBuilder.cs      生成测试样例图（ADIMSAMPLE）
   Selection/            三种触发方式取集
   Dimensioning/         标注引擎与各类别 Dimensioner（总体/分段/孔圆/坐标/任意多边形）
@@ -64,14 +64,25 @@ build.sh                dotnet build 封装
 
 ```text
 输入线段(含块展开)  8975
-清洗后              6020
+清洗后              6298
 闭合面(含圆弧bulge) 361（含开放链近距断口闭合 +28）
 去重圆              447
-特征组              123
-自动标注总量        826（总体/分段/孔直径/孔定位；定位链过密自动跳过）
-ADIM 标注重叠对     505（正面积相交 + 排除同孔内部接触；含完整分段尺寸后的真实重叠）
-无界面运行耗时      约 10s
+特征组              136
+自动标注总量        484 个尺寸 + 61 个 N×Ød 注记
+ADIM 文字撞车对数   48（真实文字外接框相交，可读性指标）
+无界面运行耗时      约 24s
 ```
+
+布局质量改进（2026-08）：
+
+- **重复直径合并为数量注记**：test.dwg 的 447 个孔只有 6 种直径（128×Ø2.75、128×Ø3.5、
+  128×Ø4.25、48×Ø2.5…），原来每个孔都引线标 ⌀（442 个），现同径 ≥2 只出 "N×Ød"
+  注记（61 个），直径标注减到 111 个——GB 惯例 "N×Ød" 注法。
+- **斜边主投影**：斜边只标较大的直角边（水平或垂直投影），不再双投影自相压线。
+- **生成后布局收尾**：完全/近重复标注去重、尺寸线沿"远离被测要素"方向外推避让，
+  注记按字高错开、代表孔引线扇形展开（最小 90° 夹角）。
+- **文字撞车指标**：以标注文字实体外接框的相交对数衡量排版质量（AABB 重叠对长尺寸链
+  交叉虚高，X/Y 定位链角部交叉但图形并不相碰）。
 
 过滤规则（`AutoDim.Core` 阈值均可配）：长度 <3mm 且不属于闭合面的线段丢弃；
 面积 <1mm² 的碎环丢弃；周长²/面积 >60 的细长碎面丢弃；中心线/虚线/点划线等辅助图层
