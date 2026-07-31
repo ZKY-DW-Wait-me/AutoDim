@@ -183,6 +183,7 @@ public sealed class Commands
             foreach (var id in ids)
             {
                 if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
+                if (IsAuxLayer(ent.Layer)) continue;
                 switch (ent)
                 {
                     case Line ln:
@@ -292,13 +293,21 @@ public sealed class Commands
                     foreach (var ci in g.CircleIndices)
                         gIds.Add(drawnIds[drawnFaceIdx.Count + ci]);
                     if (gIds.Count == 0) continue;
-                    // 纯圆孔组：只标孔（直径+定位），不标无意义的"总体外形"
+
+                    // 组类别：纯孔组只标孔；全小碎面组不标分段；其余按默认全部
+                    var cat = DimCategory.All;
                     if (g.FaceIndices.Count == 0)
-                        RunEngine(doc, gIds.ToArray(),
-                                  new AutoDimOptions { Categories = DimCategory.Holes },
-                                  usePersistedCategories: false);
+                        cat = DimCategory.Holes;
                     else
-                        RunEngine(doc, gIds.ToArray(), new AutoDimOptions());
+                    {
+                        bool allSmall = g.FaceIndices.All(fi => fi < res.Faces.Count &&
+                            ContourExtractor.FaceArea(res.Faces[fi].Points) < 50.0);
+                        if (allSmall)
+                            cat = DimCategory.Overall | DimCategory.Holes;
+                    }
+                    RunEngine(doc, gIds.ToArray(),
+                              new AutoDimOptions { Categories = cat },
+                              usePersistedCategories: false);
                 }
             }
         }
@@ -306,6 +315,13 @@ public sealed class Commands
         {
             ed.WriteMessage($"\nADIMCLEAN 出错: {ex.Message}\n");
         }
+    }
+
+    /// <summary>辅助线图层默认不参与轮廓提取（中心线/虚线/点划线等）。</summary>
+    private static bool IsAuxLayer(string layer)
+    {
+        if (layer is "ADIM" or "ADIM_CLEAN" or "ADIM_CENTER" or "Defpoints") return true;
+        return layer.Contains("中心线") || layer.Contains("虚线") || layer.Contains("点划线");
     }
 
     private static void RunCoordEngine(Document doc, ObjectId[] ids)
