@@ -273,6 +273,33 @@ public sealed class Commands
                 drawnIds.Add(cid);
                 drawn++;
             }
+
+            // 开放长链（不属于任何闭合面的长线段，如扫描外轮廓碎片）画到 ADIM_CLEAN_L
+            var faceKeys = new HashSet<(CPoint, CPoint)>();
+            foreach (var f in res.Faces)
+                for (int i = 0; i < f.Points.Length; i++)
+                {
+                    var a = f.Points[i];
+                    var b = f.Points[(i + 1) % f.Points.Length];
+                    faceKeys.Add(a.X < b.X || (a.X == b.X && a.Y <= b.Y) ? (a, b) : (b, a));
+                }
+            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN_L");
+            int open = 0;
+            foreach (var s in res.CleanedSegments)
+            {
+                if (s.A.DistanceTo(s.B) < co.MinKeepLength) continue;
+                var ka = CPoint.Snap(s.A, 0.05);
+                var kb = CPoint.Snap(s.B, 0.05);
+                var key = ka.X < kb.X || (ka.X == kb.X && ka.Y <= kb.Y) ? (ka, kb) : (kb, ka);
+                if (faceKeys.Contains(key)) continue;
+                using var ln = new Line(new Point3d(s.A.X, s.A.Y, 0), new Point3d(s.B.X, s.B.Y, 0))
+                {
+                    Layer = "ADIM_CLEAN_L"
+                };
+                ms.AppendEntity(ln);
+                tr.AddNewlyCreatedDBObject(ln, true);
+                open++;
+            }
             tr.Commit();
 
             // 特征分组公差：按清洗结果包围盒对角线比例（至少 2mm）
@@ -290,8 +317,8 @@ public sealed class Commands
 
             ed.WriteMessage(
                 $"\nADIMCLEAN: raw_segments={segs.Count} cleaned={res.CleanedSegments.Count} " +
-                $"faces={res.Faces.Count} circles={res.UniqueCircles.Count} drawn={drawn} " +
-                $"(layer=ADIM_CLEAN)\n");
+                $"faces={res.Faces.Count} circles={res.UniqueCircles.Count} open={open} " +
+                $"drawn={drawn} (layer=ADIM_CLEAN/_L)\n");
 
             if (drawnIds.Count > 0)
             {
