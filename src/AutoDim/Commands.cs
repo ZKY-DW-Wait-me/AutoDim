@@ -302,21 +302,67 @@ public sealed class Commands
                         gIds.Add(drawnIds[drawnFaceIdx.Count + ci]);
                     if (gIds.Count == 0) continue;
 
-                    // 组类别：纯孔组只标孔；全小碎面组不标分段；其余按默认全部
-                    var cat = DimCategory.All;
+                    // 组标注策略：
+                    //   纯孔组       -> 只标孔（直径+定位）
+                    //   全小碎面组   -> 最大面+孔：总体+孔（不标分段）
+                    //   混合组       -> 最大面+孔：全部；其余小面：只标总体（分段是重叠大户）
                     if (g.FaceIndices.Count == 0)
-                        cat = DimCategory.Holes;
-                    else
                     {
-                        bool allSmall = g.FaceIndices.All(fi => fi < res.Faces.Count &&
-                            ContourExtractor.FaceArea(res.Faces[fi].Points) < 50.0);
-                        if (allSmall)
-                            cat = DimCategory.Overall | DimCategory.Holes;
+                        sumDims += RunEngine(doc, gIds.ToArray(),
+                            new AutoDimOptions { Categories = DimCategory.Holes },
+                            usePersistedCategories: false);
+                        dimmedGroups++;
+                        continue;
                     }
-                    sumDims += RunEngine(doc, gIds.ToArray(),
-                                         new AutoDimOptions { Categories = cat },
-                                         usePersistedCategories: false);
-                    dimmedGroups++;
+
+                    int mainFi = -1;
+                    double mainArea = -1;
+                    foreach (var fi in g.FaceIndices)
+                    {
+                        double a = ContourExtractor.FaceArea(res.Faces[fi].Points);
+                        if (a > mainArea) { mainArea = a; mainFi = fi; }
+                    }
+
+                    var mainIds = new List<ObjectId>();
+                    int mpos = drawnFaceIdx.IndexOf(mainFi);
+                    if (mpos >= 0) mainIds.Add(drawnIds[mpos]);
+                    foreach (var ci in g.CircleIndices)
+                        mainIds.Add(drawnIds[drawnFaceIdx.Count + ci]);
+
+                    bool allSmall = g.FaceIndices.All(fi => fi < res.Faces.Count &&
+                        ContourExtractor.FaceArea(res.Faces[fi].Points) < 50.0);
+
+                    if (allSmall && mainIds.Count > 0)
+                    {
+                        sumDims += RunEngine(doc, mainIds.ToArray(),
+                            new AutoDimOptions { Categories = DimCategory.Overall | DimCategory.Holes },
+                            usePersistedCategories: false);
+                        dimmedGroups++;
+                    }
+                    else if (!allSmall)
+                    {
+                        if (mainIds.Count > 0)
+                        {
+                            sumDims += RunEngine(doc, mainIds.ToArray(),
+                                new AutoDimOptions { Categories = DimCategory.All },
+                                usePersistedCategories: false);
+                            dimmedGroups++;
+                        }
+                        var otherIds = new List<ObjectId>();
+                        foreach (var fi in g.FaceIndices)
+                        {
+                            if (fi == mainFi) continue;
+                            int pos = drawnFaceIdx.IndexOf(fi);
+                            if (pos >= 0) otherIds.Add(drawnIds[pos]);
+                        }
+                        if (otherIds.Count > 0)
+                        {
+                            sumDims += RunEngine(doc, otherIds.ToArray(),
+                                new AutoDimOptions { Categories = DimCategory.Overall },
+                                usePersistedCategories: false);
+                            dimmedGroups++;
+                        }
+                    }
                 }
                 int overlaps = CountDimOverlaps(db);
                 ed.WriteMessage(
