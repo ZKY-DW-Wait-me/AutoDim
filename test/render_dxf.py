@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """把 AutoDim 导出的 DXF 渲染成 PNG（供视觉模型/人工检查标注效果）。
-用法: python test/render_dxf.py <in.dxf> <out.png> [zoom_x0,y0,x1,y1]
-不含文字实体；块引用自动展开。"""
+用法: python test/render_dxf.py <in.dxf> <out.png> [zoom_x0,y0,x1,y1] [--layer 图层名]
+不含文字实体；块引用自动展开；--layer 只画指定图层（如 ADIM_CLEAN 看清洗结果）。"""
 import sys
 import math
 
@@ -71,11 +71,16 @@ def main():
     zoom = None
     if len(sys.argv) >= 4:
         zoom = tuple(float(x) for x in sys.argv[3].split(","))
+    layer = None
+    if "--layer" in sys.argv:
+        layer = sys.argv[sys.argv.index("--layer") + 1]
     doc = ezdxf.readfile(src)
     msp = doc.modelspace()
     fig, ax = plt.subplots(1, 1, figsize=(16, 12), dpi=150)
     ax.set_facecolor("white")
     for e in msp:
+        if layer is not None and e.dxf.layer != layer:
+            continue
         if e.dxftype() == "INSERT":
             draw_insert(ax, e, "black")
         elif e.dxftype() == "DIMENSION":
