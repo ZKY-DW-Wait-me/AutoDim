@@ -13,6 +13,8 @@ internal static class CircleDimensioner
 {
     private const int MaxChainPts = 11;  // 定位链最多段数；更密则跳过（链变噪音且压线）
     private const double MinChainGap = 8.0;   // 链相邻点最小间距；更近则文字必互相压，跳过该链
+    private const double MinChainSeg = 3.0;   // 链段最小跨度：文字宽约 3.5mm，跨度更小放不下
+                                              // 文字会被外置到界线外，与相邻链段文字互碰
 
     /// <returns>(直径标注数, 定位标注数)</returns>
     public static (int diameters, int positions) Annotate(
@@ -129,7 +131,7 @@ internal static class CircleDimensioner
             for (int i = 0; i < xPts.Count - 1; i++)
             {
                 double a = xPts[i], b = xPts[i + 1];
-                if (b - a <= tol) continue;
+                if (b - a <= System.Math.Max(tol, MinChainSeg)) continue;
                 // 首段基准=左下角(minX,bottomY)；末段终点=右下角(maxX,bottomY)；中间端点=圆心
                 Point3d p1 = i == 0 ? new Point3d(a, bottomY, 0) : new Point3d(a, xToY[a], 0);
                 Point3d p2 = i == xPts.Count - 2 ? new Point3d(b, bottomY, 0) : new Point3d(b, xToY[b], 0);
@@ -157,7 +159,7 @@ internal static class CircleDimensioner
             for (int i = 0; i < yPts.Count - 1; i++)
             {
                 double a = yPts[i], b = yPts[i + 1];
-                if (b - a <= tol) continue;
+                if (b - a <= System.Math.Max(tol, MinChainSeg)) continue;
                 Point3d p1 = i == 0 ? new Point3d(leftX, a, 0) : new Point3d(yToX[a], a, 0);
                 Point3d p2 = i == yPts.Count - 2 ? new Point3d(leftX, b, 0) : new Point3d(yToX[b], b, 0);
                 var dl = new Point3d(yDimX, (a + b) * 0.5, 0);
