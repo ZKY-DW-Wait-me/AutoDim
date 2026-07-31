@@ -12,6 +12,7 @@ namespace AutoDim.Dimensioning;
 internal static class CircleDimensioner
 {
     private const int MaxChainPts = 11;  // 定位链最多段数；更密则跳过（链变噪音且压线）
+    private const double MinChainGap = 8.0;  // 链相邻点最小间距；更近则文字必互相压，跳过该链
 
     /// <returns>(直径标注数, 定位标注数)</returns>
     public static (int diameters, int positions) Annotate(
@@ -61,54 +62,69 @@ internal static class CircleDimensioner
         // 基准端(左下角)与末端(右下角)用零件角点。延伸线穿零件实体是内部孔定位的 GB 常态。
         var holeXs = circles.Select(c => c.Center.X).Distinct().OrderBy(v => v).ToList();
         double bottomY = e.MinPoint.Y, topY = e.MaxPoint.Y, rightX = e.MaxPoint.X;
-        if (holeXs.Count + 1 > MaxChainPts) return (dia, pos);   // 太密：定位链会互相压线，跳过
-        // 每个 X 对应的圆心 Y(同一 X 若有多孔，取第一个；延伸线都从该圆心引)
-        var xToY = new Dictionary<double, double>();
-        foreach (var c in circles)
-            if (!xToY.ContainsKey(c.Center.X)) xToY[c.Center.X] = c.Center.Y;
-
-        var xPts = new List<double> { e.MinPoint.X };
-        xPts.AddRange(holeXs);
-        xPts.Add(rightX);
-        double xDimY = bottomY - posOff;
-        for (int i = 0; i < xPts.Count - 1; i++)
+        bool xChainOk = holeXs.Count + 1 <= MaxChainPts && MinGapOk(holeXs);
+        if (xChainOk)
         {
-            double a = xPts[i], b = xPts[i + 1];
-            if (b - a <= tol) continue;
-            // 首段基准=左下角(minX,bottomY)；末段终点=右下角(maxX,bottomY)；中间端点=圆心
-            Point3d p1 = i == 0 ? new Point3d(a, bottomY, 0) : new Point3d(a, xToY[a], 0);
-            Point3d p2 = i == xPts.Count - 2 ? new Point3d(b, bottomY, 0) : new Point3d(b, xToY[b], 0);
-            var dl = new Point3d((a + b) * 0.5, xDimY, 0);
-            var dim = new RotatedDimension(0.0, p1, p2, dl, "", dimStyleId);
-            DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, FormatLen(b - a));
-            pos++;
+            // 每个 X 对应的圆心 Y(同一 X 若有多孔，取第一个；延伸线都从该圆心引)
+            var xToY = new Dictionary<double, double>();
+            foreach (var c in circles)
+                if (!xToY.ContainsKey(c.Center.X)) xToY[c.Center.X] = c.Center.Y;
+
+            var xPts = new List<double> { e.MinPoint.X };
+            xPts.AddRange(holeXs);
+            xPts.Add(rightX);
+            double xDimY = bottomY - posOff;
+            for (int i = 0; i < xPts.Count - 1; i++)
+            {
+                double a = xPts[i], b = xPts[i + 1];
+                if (b - a <= tol) continue;
+                // 首段基准=左下角(minX,bottomY)；末段终点=右下角(maxX,bottomY)；中间端点=圆心
+                Point3d p1 = i == 0 ? new Point3d(a, bottomY, 0) : new Point3d(a, xToY[a], 0);
+                Point3d p2 = i == xPts.Count - 2 ? new Point3d(b, bottomY, 0) : new Point3d(b, xToY[b], 0);
+                var dl = new Point3d((a + b) * 0.5, xDimY, 0);
+                var dim = new RotatedDimension(0.0, p1, p2, dl, "", dimStyleId);
+                DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, FormatLen(b - a));
+                pos++;
+            }
         }
 
         // —— Y 定位链：minY→cy1→cy2→...→maxY。延伸线从圆心水平引到零件左侧的尺寸线。
         var holeYs = circles.Select(c => c.Center.Y).Distinct().OrderBy(v => v).ToList();
         double leftX = e.MinPoint.X;
-        if (holeYs.Count + 1 > MaxChainPts) return (dia, pos);   // 太密：跳过
-        var yToX = new Dictionary<double, double>();
-        foreach (var c in circles)
-            if (!yToX.ContainsKey(c.Center.Y)) yToX[c.Center.Y] = c.Center.X;
-
-        var yPts = new List<double> { e.MinPoint.Y };
-        yPts.AddRange(holeYs);
-        yPts.Add(topY);
-        double yDimX = leftX - posOff;
-        for (int i = 0; i < yPts.Count - 1; i++)
+        bool yChainOk = holeYs.Count + 1 <= MaxChainPts && MinGapOk(holeYs);
+        if (yChainOk)
         {
-            double a = yPts[i], b = yPts[i + 1];
-            if (b - a <= tol) continue;
-            Point3d p1 = i == 0 ? new Point3d(leftX, a, 0) : new Point3d(yToX[a], a, 0);
-            Point3d p2 = i == yPts.Count - 2 ? new Point3d(leftX, b, 0) : new Point3d(yToX[b], b, 0);
-            var dl = new Point3d(yDimX, (a + b) * 0.5, 0);
-            var dim = new RotatedDimension(System.Math.PI * 0.5, p1, p2, dl, "", dimStyleId);
-            DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, FormatLen(b - a));
-            pos++;
+            var yToX = new Dictionary<double, double>();
+            foreach (var c in circles)
+                if (!yToX.ContainsKey(c.Center.Y)) yToX[c.Center.Y] = c.Center.X;
+
+            var yPts = new List<double> { e.MinPoint.Y };
+            yPts.AddRange(holeYs);
+            yPts.Add(topY);
+            double yDimX = leftX - posOff;
+            for (int i = 0; i < yPts.Count - 1; i++)
+            {
+                double a = yPts[i], b = yPts[i + 1];
+                if (b - a <= tol) continue;
+                Point3d p1 = i == 0 ? new Point3d(leftX, a, 0) : new Point3d(yToX[a], a, 0);
+                Point3d p2 = i == yPts.Count - 2 ? new Point3d(leftX, b, 0) : new Point3d(yToX[b], b, 0);
+                var dl = new Point3d(yDimX, (a + b) * 0.5, 0);
+                var dim = new RotatedDimension(System.Math.PI * 0.5, p1, p2, dl, "", dimStyleId);
+                DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, FormatLen(b - a));
+                pos++;
+            }
         }
 
         return (dia, pos);
+    }
+
+    /// <summary>相邻位置点间距是否全部 &gt;= MinChainGap（否则链文字互相压）。</summary>
+    private static bool MinGapOk(List<double> sorted)
+    {
+        for (int i = 1; i < sorted.Count; i++)
+            if (sorted[i] - sorted[i - 1] < MinChainGap)
+                return false;
+        return true;
     }
 
     /// <summary>长度格式化：整数不带小数，否则最多两位并去尾零。</summary>
