@@ -302,6 +302,18 @@ public sealed class Commands
                         gIds.Add(drawnIds[drawnFaceIdx.Count + ci]);
                     if (gIds.Count == 0) continue;
 
+                    // 组级清场：整组区域只 purge 一次，组内多次 RunEngine 调用互不误擦，
+                    // 也不会有"小面区旧尺寸残留"问题
+                    using (Transaction tr2 = db.TransactionManager.StartTransaction())
+                    {
+                        var bt2 = (BlockTable)tr2.GetObject(db.BlockTableId, OpenMode.ForRead);
+                        var ms2 = (BlockTableRecord)tr2.GetObject(bt2[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                        Extents3d? gExt = Cad.GeometryUtils.CombinedExtents(tr2, gIds.ToArray());
+                        double buf = gExt.HasValue ? 5.0 * Cad.GeometryUtils.AutoGap(gExt.Value) : 0.0;
+                        PurgeAdimEntities(tr2, ms2, "ADIM", gExt, buf);
+                        tr2.Commit();
+                    }
+
                     // 组标注策略：
                     //   纯孔组       -> 只标孔（直径+定位）
                     //   全小碎面组   -> 最大面+孔：总体+孔（不标分段）
@@ -310,7 +322,7 @@ public sealed class Commands
                     {
                         sumDims += RunEngine(doc, gIds.ToArray(),
                             new AutoDimOptions { Categories = DimCategory.Holes },
-                            usePersistedCategories: false);
+                            usePersistedCategories: false, purge: false);
                         dimmedGroups++;
                         continue;
                     }
@@ -336,7 +348,7 @@ public sealed class Commands
                     {
                         sumDims += RunEngine(doc, mainIds.ToArray(),
                             new AutoDimOptions { Categories = DimCategory.Overall | DimCategory.Holes },
-                            usePersistedCategories: false);
+                            usePersistedCategories: false, purge: false);
                         dimmedGroups++;
                     }
                     else if (!allSmall)
@@ -345,7 +357,7 @@ public sealed class Commands
                         {
                             sumDims += RunEngine(doc, mainIds.ToArray(),
                                 new AutoDimOptions { Categories = DimCategory.All },
-                                usePersistedCategories: false);
+                                usePersistedCategories: false, purge: false);
                             dimmedGroups++;
                         }
                         var otherIds = new List<ObjectId>();
@@ -359,7 +371,7 @@ public sealed class Commands
                         {
                             sumDims += RunEngine(doc, otherIds.ToArray(),
                                 new AutoDimOptions { Categories = DimCategory.Overall },
-                                usePersistedCategories: false);
+                                usePersistedCategories: false, purge: false);
                             dimmedGroups++;
                         }
                     }
@@ -681,7 +693,7 @@ public sealed class Commands
     }
 
     private static int RunEngine(Document doc, ObjectId[] ids, AutoDimOptions opt,
-                                 bool usePersistedCategories = true)
+                                 bool usePersistedCategories = true, bool purge = true)
     {
         Database db = doc.Database;
         Editor ed = doc.Editor;
@@ -711,8 +723,12 @@ public sealed class Commands
 
             // 重新标注前先清场：只清掉落在本次操作区域(带 buffer)内的旧标注，
             // 避免不同区域分别标注时互相擦除(extBox=null 时清全部，用于整图刷新)。
-            double buf = extBox.HasValue ? 5.0 * GeometryUtils.AutoGap(extBox.Value) : 0.0;
-            PurgeAdimEntities(tr, ms, opt.LayerName, extBox, buf);
+            // purge=false：同组内后续调用（如"其余小面"）不 purge，避免误擦本组主面刚生成的尺寸。
+            if (purge)
+            {
+                double buf = extBox.HasValue ? 5.0 * GeometryUtils.AutoGap(extBox.Value) : 0.0;
+                PurgeAdimEntities(tr, ms, opt.LayerName, extBox, buf);
+            }
 
             r = DimensionEngine.Run(db, tr, ms, ids, opt, dimStyleId, layerId, extBox);
             tr.Commit();
