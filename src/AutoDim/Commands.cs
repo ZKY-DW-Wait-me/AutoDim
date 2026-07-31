@@ -660,7 +660,7 @@ public sealed class Commands
         foreach (ObjectId id in ms)
         {
             if (tr.GetObject(id, OpenMode.ForRead) is not Polyline pl) continue;
-            ed.WriteMessage($"\n[Polyline #{idx}] vertices={pl.NumberOfVertices} closed={pl.Closed}");
+            ed.WriteMessage($"\n[Polyline #{idx}] layer={pl.Layer} vertices={pl.NumberOfVertices} closed={pl.Closed}");
             Point2d c = DebugCentroid(pl);
             ed.WriteMessage($"  centroid=({c.X:F2},{c.Y:F2})");
             int n = pl.NumberOfVertices;
