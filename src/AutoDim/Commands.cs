@@ -249,7 +249,8 @@ public sealed class Commands
                 ry1 = Math.Max(ry1, Math.Max(s.A.Y, s.B.Y));
             }
             double rawDiag = Math.Sqrt((rx1 - rx0) * (rx1 - rx0) + (ry1 - ry0) * (ry1 - ry0));
-            double linkGap = Math.Max(0.5, rawDiag * 0.0002);
+            // 开放链闭合间距：用户固定值(ADIMCLN 第 6 项)>0 时用固定值，否则自动按对角线 0.02%
+            double linkGap = cp[5] > 0 ? cp[5] : Math.Max(0.5, rawDiag * 0.0002);
             var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4], linkGap);
             var res = ContourExtractor.Process(segs, circles, co);
             LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN");
@@ -481,7 +482,7 @@ public sealed class Commands
         string[] names =
         {
             "吸附公差 SnapTol", "合并公差 MergeTol", "最短保留长度 MinKeepLength",
-            "最小面积 MinFaceArea", "最大细长度 MaxFaceThinness",
+            "最小面积 MinFaceArea", "最大细长度 MaxFaceThinness", "开放链闭合 LinkGap(0=自动)",
         };
         var vals = (double[])cur.Clone();
         for (int i = 0; i < vals.Length; i++)
@@ -496,7 +497,7 @@ public sealed class Commands
         Cad.OptionsStore.WriteCleanParams(db, vals);
         ed.WriteMessage(
             $"\n已保存清洗参数: SnapTol={vals[0]} MergeTol={vals[1]} MinKeep={vals[2]} " +
-            $"MinArea={vals[3]} Thinness={vals[4]}\n");
+            $"MinArea={vals[3]} Thinness={vals[4]} LinkGap={vals[5]}\n");
     }
 
     private static void RunCoordEngine(Document doc, ObjectId[] ids)

@@ -78,19 +78,22 @@ internal static class OptionsStore
         tr.Commit();
     }
 
-    /// <summary>读清洗参数（SnapTol/MergeTol/MinKeepLength/MinFaceArea/MaxFaceThinness）；没设过返回默认。</summary>
+    /// <summary>读清洗参数（SnapTol/MergeTol/MinKeepLength/MinFaceArea/MaxFaceThinness/LinkGap）；
+    /// LinkGap=0 表示自动(按包围盒对角线 0.02%)。没设过返回默认。</summary>
     public static double[] ReadCleanParams(Database db, Transaction tr)
     {
-        var def = new[] { 0.5, 1.0, 3.0, 1.0, 60.0 };
+        var def = new[] { 0.5, 1.0, 3.0, 1.0, 60.0, 0.0 };
         var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
         if (!nod.Contains(CleanKey)) return def;
         if (tr.GetObject(nod.GetAt(CleanKey), OpenMode.ForRead) is not Xrecord rec) return def;
-        var vals = new double[5];
+        var vals = new double[6];
         int i = 0;
         foreach (TypedValue tv in rec.Data)
-            if (tv.TypeCode is >= 40 and <= 44 && tv.Value is double d && i < 5)
+            if (tv.TypeCode is >= 40 and <= 45 && tv.Value is double d && i < 6)
                 vals[i++] = d;
-        return i == 5 ? vals : def;
+        if (i < 5) return def;       // 数据损坏
+        if (i == 5) vals[5] = 0.0;   // 旧图只有 5 个参数：第 6 个 LinkGap 用默认(自动)
+        return vals;
     }
 
     /// <summary>写清洗参数到 NOD。</summary>
@@ -99,7 +102,7 @@ internal static class OptionsStore
         using Transaction tr = db.TransactionManager.StartTransaction();
         var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
         var buf = new ResultBuffer();
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 6; i++)
             buf.Add(new TypedValue(40 + i, vals[i]));
         if (nod.Contains(CleanKey))
         {
