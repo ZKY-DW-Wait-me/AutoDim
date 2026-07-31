@@ -12,7 +12,7 @@ namespace AutoDim.Dimensioning;
 internal static class CircleDimensioner
 {
     private const int MaxChainPts = 11;  // 定位链最多段数；更密则跳过（链变噪音且压线）
-    private const double MinChainGap = 8.0;  // 链相邻点最小间距；更近则文字必互相压，跳过该链
+    private const double MinChainGap = 8.0;   // 链相邻点最小间距；更近则文字必互相压，跳过该链
 
     /// <returns>(直径标注数, 定位标注数)</returns>
     public static (int diameters, int positions) Annotate(
