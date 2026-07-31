@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AutoDim 无界面回归测试：编译 -> SECURELOAD=0 + NETLOAD -> accoreconsole 运行 -> 断言
+# AutoDim 无界面回归测试：编译 -> SECURELOAD=0 + NETLOAD -> 开启自动清洗 -> ADIMALL -> 断言
 # 用法: bash test/run-tests.sh
 set -uo pipefail
 
