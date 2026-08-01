@@ -190,7 +190,8 @@ internal static class CircleDimensioner
         double txtH = ReadDimTextHeight(db, tr, dimStyleId);
         using var mt = new MText();
         mt.SetDatabaseDefaults(db);
-        mt.Contents = $"{n}×Ø{FormatLen(diameter)}";
+        // 内联 Arial：×/Ø 是 Unicode 字符，图纸默认样式(txt.shx)不含这些字形会显示为问号
+        mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{n}×Ø{FormatLen(diameter)}}}";
         mt.TextHeight = txtH;
         mt.Location = at;
         mt.Attachment = AttachmentPoint.MiddleCenter;

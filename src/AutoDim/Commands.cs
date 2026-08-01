@@ -807,7 +807,7 @@ public sealed class Commands
         var toErase = new List<ObjectId>();
         foreach (ObjectId id in ms)
         {
-            Entity ent;
+            Entity? ent;
             try { ent = tr.GetObject(id, OpenMode.ForRead) as Entity; }
             catch { continue; }
             if (ent == null) continue;

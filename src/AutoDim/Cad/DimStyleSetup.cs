@@ -59,7 +59,7 @@ internal static class DimStyleSetup
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
             foreach (ObjectId id in ms)
             {
-                Entity ent;
+                Entity? ent;
                 try { ent = tr.GetObject(id, OpenMode.ForRead) as Entity; }
                 catch { continue; }
                 if (ent == null) continue;
