@@ -18,13 +18,11 @@
 
 test2（SW 导出的对称圆头板件）：**34 个尺寸 + 2 个 N×Ød 注记，文字撞车 0**
 
-![test2 标注效果](picture/test2_annotated_v4.png)
+![test2 标注效果](picture/test2_annotated.png)
 
 复杂扫描件 test.dwg（`ADIMCLN` 调紧参数后）：130 个尺寸 + 64 个注记，文字撞车 0
 
 ![test.dwg 标注整图](picture/test_dwg_annotated.png)
-
-![弹簧支撑区域局部](picture/test_dwg_zoom_spring.png)
 
 ## 安装
 
