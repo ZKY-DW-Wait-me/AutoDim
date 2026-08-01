@@ -69,9 +69,10 @@ CLEAN="$(tr -d '\000' < "$LOG")"
 # 断言至少生成了标注（具体数量随 Phase 2~5 的类别组合变化，不做硬编码）
 tot="$(echo "$CLEAN" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
 { [ -n "$tot" ] && [ "$tot" -gt 0 ]; } || { echo "FAIL: total 标注数量为 0"; fail=1; }
-# 幂等断言：连续两次 ADIMCLEAN(直接标注)的统计行必须完全一致（清场去重的回归保护）
-CL1="$(echo "$CLEAN" | grep "AUTODIM:" | tail -2 | head -1)"
-CL2="$(echo "$CLEAN" | grep "AUTODIM:" | tail -1)"
+# 幂等断言：连续两次 ADIMCLEAN(分组标注)的合计行必须完全一致（清场去重的回归保护）。
+# 用 ASCII 标记 landed= 匹配（UTF-16 日志去 null 后中文不可 grep）。
+CL1="$(echo "$CLEAN" | grep "landed=" | tail -2 | head -1)"
+CL2="$(echo "$CLEAN" | grep "landed=" | tail -1)"
 [ -n "$CL1" ] && [ "$CL1" = "$CL2" ] || { echo "FAIL: 重复运行 ADIMCLEAN 结果不一致(非幂等)"; fail=1; }
 
 echo "== 5) 第二张图泛化(合成 extra.dxf) =="

@@ -5,11 +5,14 @@ using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using AutoDim.Cad;
 using AutoDim.Config;
+using AutoDim.Core;
+using AutoDim.Core.Geometry;
 using AutoDim.Dimensioning;
 using AutoDim.Selection;
 // Application 用别名精确指向 core 版本（accoremgd），兼容 accoreconsole 与完整 AutoCAD，
 // 避免与 acmgd 的 ApplicationServices.Application 产生二义性。
 using AcApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+using CPoint = AutoDim.Core.Geometry.Point2D;
 
 [assembly: ExtensionApplication(typeof(AutoDim.PluginInit))]
 [assembly: CommandClass(typeof(AutoDim.Commands))]
@@ -151,7 +154,281 @@ public sealed class Commands
         // 顺手清除旧版本 ADIMCLEAN 曾绘制到 ADIM_CLEAN/_L 图层上的重建副本
         // （"抄一遍再标注"的造假中间层），避免原图残留假轮廓/假圆。
         PurgeCleanCopyLayers(doc.Database);
-        RunEngine(doc, ids, new AutoDimOptions());
+        GroupedDim(doc, ids);
+    }
+
+    /// <summary>按特征组对原图实体直接标注：闭合轮廓 + 圆按包围盒邻近聚成组，
+    /// 逐组标注（纯孔组只标孔、混合组主面全标、小碎面只标总体、开放线独立标分段），
+    /// 几何基准始终是原图实体本身的顶点/圆心/半径——不重建几何、不画任何副本。</summary>
+    private static void GroupedDim(Document doc, ObjectId[] ids)
+    {
+        Editor ed = doc.Editor;
+        Database db = doc.Database;
+
+        var faceIds = new List<ObjectId>();   // 闭合 Polyline（轮廓面）
+        var circleIds = new List<ObjectId>(); // Circle（孔）
+        var openIds = new List<ObjectId>();   // Line / Arc / 开放 Polyline
+        try
+        {
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var id in ids)
+                {
+                    // ids 是命令开始时抓取的整图快照；PurgeCleanCopyLayers 可能已把
+                    // 旧版残留的 ADIM_CLEAN 副本擦掉，读取这些已擦除对象会抛 eWasErased。
+                    Entity? ent;
+                    try { ent = tr.GetObject(id, OpenMode.ForRead) as Entity; }
+                    catch { continue; }
+                    if (ent == null) continue;
+                    if (ent is Dimension) continue;   // 插件自产标注不参与分组/统计（保证幂等）
+                    if (IsAuxLayer(ent.Layer)) continue;
+                    switch (ent)
+                    {
+                        case Polyline pl when pl.Closed:
+                            faceIds.Add(id);
+                            break;
+                        case Circle:
+                            circleIds.Add(id);
+                            break;
+                        case Line or Arc or Polyline:
+                            openIds.Add(id);
+                            break;
+                    }
+                }
+                tr.Commit();
+            }
+
+            // 原实体几何（分组与面积判定用，事务内读取后转纯数据）
+            var faces = new List<FaceData>();
+            foreach (var id in faceIds)
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    if (tr.GetObject(id, OpenMode.ForRead) is Polyline pl && pl.Closed)
+                    {
+                        int n = pl.NumberOfVertices;
+                        var pts = new Point2D[n];
+                        var bulges = new double[n];
+                        for (int i = 0; i < n; i++)
+                        {
+                            var p = pl.GetPoint2dAt(i);
+                            pts[i] = new Point2D(p.X, p.Y);
+                            bulges[i] = pl.GetBulgeAt(i);
+                        }
+                        faces.Add(new FaceData(pts, bulges));
+                    }
+                    tr.Commit();
+                }
+            }
+            var circGeoms = new List<(Point2D Center, double Radius)>();
+            foreach (var id in circleIds)
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    if (tr.GetObject(id, OpenMode.ForRead) is Circle c)
+                        circGeoms.Add((new Point2D(c.Center.X, c.Center.Y), c.Radius));
+                    tr.Commit();
+                }
+            }
+
+            // 特征分组公差：按有效实体包围盒对角线比例（至少 2mm）。
+            // 用收集后的有效 id（原始 ids 快照可能含被 PurgeCleanCopyLayers 擦掉的旧副本）。
+            var validIds = faceIds.Concat(circleIds).Concat(openIds).ToArray();
+            Extents3d? allExt = null;
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                allExt = Cad.GeometryUtils.CombinedExtents(tr, validIds);
+                tr.Commit();
+            }
+            double gapTol = 1.0;
+            if (allExt.HasValue)
+            {
+                var e = allExt.Value;
+                double diag = Math.Sqrt(
+                    (e.MaxPoint.X - e.MinPoint.X) * (e.MaxPoint.X - e.MinPoint.X) +
+                    (e.MaxPoint.Y - e.MinPoint.Y) * (e.MaxPoint.Y - e.MinPoint.Y));
+                gapTol = Math.Max(1.0, diag * 0.001);
+            }
+
+            var groups = FeatureGrouping.GroupFeatures(faces, circGeoms, gapTol);
+            ed.WriteMessage(
+                $"\nADIMGROUP: 闭合面={faceIds.Count} 圆={circleIds.Count} 开放线={openIds.Count} " +
+                $"特征组={groups.Count} (原图实体直接标注，无重建副本)\n");
+
+            // 整区清场：只清落在本次区域内的自产旧标注
+            if (allExt.HasValue)
+            {
+                using (Transaction trP = db.TransactionManager.StartTransaction())
+                {
+                    var btP = (BlockTable)trP.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    var msP = (BlockTableRecord)trP.GetObject(btP[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                    double bufP = 6.0 * Cad.GeometryUtils.AutoGap(allExt.Value);
+                    PurgeAdimEntities(trP, msP, allExt, bufP);
+                    trP.Commit();
+                }
+            }
+
+            int dimmedGroups = 0, sumDims = 0;
+            ed.WriteMessage($"    -> 按 {groups.Count} 个特征组分别标注...\n");
+            // 纯孔组（无闭合轮廓）：统一累积到孔池一次标注——CircleDimensioner 内部
+            // 会做直径分桶 + 空间聚类 + 镜像合并（N×Ød），避免每个孔被拆成独立组、
+            // 直径合并与阵列注法全部失效（test3 16 孔曾被打散成 16 个单独 Ø）。
+            var holePool = new List<ObjectId>();
+            int holeGroupCount = 0;
+            foreach (var g in groups)
+            {
+                var gIds = new List<ObjectId>();
+                foreach (var fi in g.FaceIndices)
+                    if (fi < faceIds.Count) gIds.Add(faceIds[fi]);
+                foreach (var ci in g.CircleIndices)
+                    if (ci < circleIds.Count) gIds.Add(circleIds[ci]);
+                if (gIds.Count == 0) continue;
+
+                // 组标注策略（沿用分组标注的组织逻辑，但实体全部是原图对象）：
+                //   纯孔组       -> 累积到统一孔池（直径合并 N×Ød）
+                //   全小碎面组   -> 最大面+孔：总体+孔（不标分段）
+                //   混合组       -> 最大面+孔：全部；其余小面：只标总体
+                if (g.FaceIndices.Count == 0)
+                {
+                    holePool.AddRange(g.CircleIndices
+                        .Where(ci => ci < circleIds.Count)
+                        .Select(ci => circleIds[ci]));
+                    holeGroupCount++;
+                    continue;
+                }
+
+                // 最大面 = 主面
+                int mainFi = g.FaceIndices[0];
+                double mainArea = -1;
+                foreach (var fi in g.FaceIndices)
+                {
+                    if (fi >= faces.Count) continue;
+                    double a = ContourExtractor.FaceArea(faces[fi].Points);
+                    if (a > mainArea) { mainArea = a; mainFi = fi; }
+                }
+                var mainIds = new List<ObjectId>();
+                if (mainFi < faceIds.Count) mainIds.Add(faceIds[mainFi]);
+                foreach (var ci in g.CircleIndices)
+                    if (ci < circleIds.Count) mainIds.Add(circleIds[ci]);
+
+                bool allSmall = g.FaceIndices.All(fi => fi < faces.Count &&
+                    ContourExtractor.FaceArea(faces[fi].Points) < 50.0);
+
+                if (allSmall && mainIds.Count > 0)
+                {
+                    sumDims += RunEngine(doc, mainIds.ToArray(),
+                        new AutoDimOptions { Categories = DimCategory.Overall | DimCategory.Holes },
+                        usePersistedCategories: false, purge: false);
+                    dimmedGroups++;
+                }
+                else if (!allSmall)
+                {
+                    if (mainIds.Count > 0)
+                    {
+                        sumDims += RunEngine(doc, mainIds.ToArray(),
+                            new AutoDimOptions { Categories = DimCategory.All },
+                            usePersistedCategories: false, purge: false);
+                        dimmedGroups++;
+                    }
+                    // 其余小面：若与主面"连体"(包围盒重叠度高)跳过，否则只标总体
+                    var otherIds = new List<ObjectId>();
+                    foreach (var fi in g.FaceIndices)
+                    {
+                        if (fi == mainFi || fi >= faceIds.Count) continue;
+                        otherIds.Add(faceIds[fi]);
+                    }
+                    if (otherIds.Count > 0)
+                    {
+                        using (Transaction trO = db.TransactionManager.StartTransaction())
+                        {
+                            Extents3d? mExt = Cad.GeometryUtils.CombinedExtents(trO, mainIds.ToArray());
+                            Extents3d? oExt = Cad.GeometryUtils.CombinedExtents(trO, otherIds.ToArray());
+                            double overlap = 0;
+                            if (mExt.HasValue && oExt.HasValue)
+                            {
+                                var a = mExt.Value; var b = oExt.Value;
+                                double ix = Math.Min(a.MaxPoint.X, b.MaxPoint.X) - Math.Max(a.MinPoint.X, b.MinPoint.X);
+                                double iy = Math.Min(a.MaxPoint.Y, b.MaxPoint.Y) - Math.Max(a.MinPoint.Y, b.MinPoint.Y);
+                                if (ix > 0 && iy > 0)
+                                {
+                                    double aw = a.MaxPoint.X - a.MinPoint.X, ah = a.MaxPoint.Y - a.MinPoint.Y;
+                                    overlap = (ix * iy) / Math.Max(1e-9, aw * ah);
+                                }
+                            }
+                            trO.Commit();
+                            if (overlap < 0.6)
+                            {
+                                sumDims += RunEngine(doc, otherIds.ToArray(),
+                                    new AutoDimOptions { Categories = DimCategory.Overall },
+                                    usePersistedCategories: false, purge: false);
+                                dimmedGroups++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 统一孔池：所有散孔一次标注（内部自动合并同规格/对称/阵列）
+            if (holePool.Count > 0)
+            {
+                sumDims += RunEngine(doc, holePool.ToArray(),
+                    new AutoDimOptions { Categories = DimCategory.Holes },
+                    usePersistedCategories: false, purge: false);
+                dimmedGroups += holeGroupCount;
+            }
+
+            // 开放线段（不属于任何闭合轮廓/圆）：独立成组标分段，单条线只出一个长度，
+            // 多条不相连的散线不会被强行合并出跨部件总体尺寸。
+            if (openIds.Count > 0)
+            {
+                sumDims += RunEngine(doc, openIds.ToArray(),
+                    new AutoDimOptions { Categories = DimCategory.Segment },
+                    usePersistedCategories: false, purge: false);
+                dimmedGroups++;
+            }
+
+            // 布局收尾：整区去重 + 外推避让
+            if (allExt.HasValue)
+            {
+                int removedDup = 0, movedAway = 0;
+                using (Transaction trL = db.TransactionManager.StartTransaction())
+                {
+                    double gapL = Cad.GeometryUtils.AutoGap(allExt.Value);
+                    (removedDup, movedAway) = Dimensioning.LayoutSolver.Resolve(db, trL, allExt.Value, gapL);
+                    trL.Commit();
+                }
+                if (removedDup > 0 || movedAway > 0)
+                    ed.WriteMessage($"    -> 布局收尾: 去重 {removedDup} 个 / 外推避让 {movedAway} 次\n");
+            }
+            else
+            {
+                using (Transaction trL = db.TransactionManager.StartTransaction())
+                {
+                    Dimensioning.LayoutSolver.Dedupe(db, trL);
+                    trL.Commit();
+                }
+            }
+
+            var (finalDims, finalNotes) = CountAdimEntities(db);
+            var (overlaps, overlapTop) = CountDimOverlaps(db);
+            var (textHits, textTop) = CountDimTextOverlaps(db);
+            ed.WriteMessage(
+                $"    -> 合计: {dimmedGroups} 组 / 生成 {sumDims} 个尺寸、落地 {finalDims} 个尺寸 " +
+                $"+ {finalNotes} 个注记 / ADIM 文字撞车 {textHits} 对 " +
+                $"[AABB 重叠 {overlaps}] [{overlapTop}] " +
+                $"(landed={finalDims} notes={finalNotes} groups={dimmedGroups} textHits={textHits})\n");
+        }
+        catch (Autodesk.AutoCAD.Runtime.Exception ex)
+        {
+            ed.WriteMessage($"\nADIMCLEAN 出错: {ex.Message}\n");
+        }
+    }
+
+    /// <summary>辅助线图层默认不参与轮廓提取（中心线/虚线/点划线等）。</summary>
+    private static bool IsAuxLayer(string layer)
+    {
+        if (layer is "ADIM" or "ADIM_CLEAN" or "ADIM_CLEAN_L" or "ADIM_CENTER" or "Defpoints") return true;
+        return layer.Contains("中心线") || layer.Contains("虚线") || layer.Contains("点划线");
     }
 
     /// <summary>删除 ADIM_CLEAN / ADIM_CLEAN_L 图层上的全部实体：旧版本清洗管线
