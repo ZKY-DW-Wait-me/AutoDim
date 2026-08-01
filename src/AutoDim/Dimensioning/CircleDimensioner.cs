@@ -82,7 +82,7 @@ internal static class CircleDimensioner
                 string txt = group.Count > 1
                     ? $"{group.Count}×Ø{FormatLen(rep.Radius * 2.0)}"
                     : "Ø" + FormatLen(rep.Radius * 2.0);
-                AddDiameterLeader(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId, baseGap, midX);
+                AddDiameterLeader(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId, midX);
                 dia++;
             }
         }
@@ -308,25 +308,28 @@ internal static class CircleDimensioner
     /// <summary>国标"折线引出线"直径标注：实心箭头从圆周引出，先斜线段(约 45°)再折成
     /// 水平直线，文字 ⌀d 写在水平线段上方居中。用 Line+Solid+MText 组合——小孔的文字
     /// 比圆大，"过圆心两端箭头+中间文字"放不下，折线引出线是 GB 标准注法。
-    /// 孔在中轴线右侧时向左引出，避免文字飞出图外。</summary>
+    /// 孔在中轴线右侧时向左引出，避免文字飞出图外。
+    /// 箭头/斜线随孔尺寸自适应：小孔配小箭头、短斜线(旧版固定按 baseGap 甩长线+默认
+    /// 2.5mm 箭头，0.8mm 半径的孔上画 1.25mm 箭头+6.7mm 斜线，严重不成比例)。</summary>
     private static void AddDiameterLeader(Database db, Transaction tr, BlockTableRecord space,
-        Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double baseGap,
-        double midX)
+        Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double midX)
     {
-        double asz = 2.5, txtH = 2.5;
+        double defAsz = 2.5, txtH = 2.5;
         ObjectId textStyleId = ObjectId.Null;
         try
         {
             var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
-            asz = dst.Dimasz * dst.Dimscale;
+            defAsz = dst.Dimasz * dst.Dimscale;
             txtH = dst.Dimtxt * dst.Dimscale;
             textStyleId = dst.Dimtxsty;   // ADIM 样式的国标文字样式
         }
         catch { }
-        double leader = System.Math.Max(8.0, radius + baseGap * 1.2);
         int dir = center.X >= midX ? -1 : 1;   // 孔在图中轴线右侧 -> 向左引出，否则向右
         // 折线：圆周点(箭头) -> 斜线45° -> 水平线(文字区)
-        double slope = System.Math.Max(4.0, radius + baseGap * 0.8);   // 斜线水平/垂直分量
+        // 箭头：随孔缩小(约 0.9×半径，下限 0.6 保证可见)，绝不大于默认标注箭头
+        double asz = System.Math.Clamp(radius * 0.9, 0.6, defAsz);
+        // 斜线：与箭头成比例(45°斜线两直角边 ≈ 2.2×箭头)，小孔不再甩长线
+        double slope = System.Math.Clamp(asz * 2.2, 1.5, System.Math.Max(1.5, radius * 2.0));
         var pCirc = new Point3d(center.X + dir * radius, center.Y, 0);              // 箭头尖端(圆周)
         var pBend = new Point3d(pCirc.X + dir * slope, pCirc.Y + slope, 0);         // 折点(斜线转水平)
         double textW = System.Math.Max(10.0, 0.7 * txtH * txt.Length);              // 文字区宽度
