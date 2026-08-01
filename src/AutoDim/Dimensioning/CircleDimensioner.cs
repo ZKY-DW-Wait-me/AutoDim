@@ -82,7 +82,26 @@ internal static class CircleDimensioner
                 string txt = group.Count > 1
                     ? $"{group.Count}×Ø{FormatLen(rep.Radius * 2.0)}"
                     : "Ø" + FormatLen(rep.Radius * 2.0);
-                AddDiameterLeader(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId, midX);
+                // 大圆：过圆心直线 + 两端箭头(DiametricDimension，GB 标准直径注法)。
+                // 判定：圆直径能否容纳"文字 + 两端箭头 + 间隙"；放不下(小孔)退回折线引出线。
+                double dimTxtH = 2.5, dimAsz = 2.5;
+                try
+                {
+                    var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
+                    dimTxtH = dst.Dimtxt * dst.Dimscale;
+                    dimAsz = dst.Dimasz * dst.Dimscale;
+                }
+                catch { }
+                double fitTextW = 0.7 * dimTxtH * txt.Length;
+                double fitAsz = System.Math.Min(System.Math.Max(0.6, rep.Radius * 0.9), dimAsz);
+                if (rep.Radius * 2.0 >= fitTextW + 2 * fitAsz + 2.0)
+                {
+                    AddDiameterDim(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId);
+                }
+                else
+                {
+                    AddDiameterLeader(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId, midX);
+                }
                 dia++;
             }
         }
@@ -303,6 +322,18 @@ internal static class CircleDimensioner
             if (!found) return false;
         }
         return true;
+    }
+
+    /// <summary>国标标准直径注法：尺寸线过圆心、两端实心箭头指向圆周、文字在尺寸线中间
+    /// 上方(ADIM 样式 Dimtix/Dimtad 已固化)。圆直径足够容纳文字+箭头时用此形式，
+    /// 小孔文字放不下时改用折线引出线(AddDiameterLeader)。</summary>
+    private static void AddDiameterDim(Database db, Transaction tr, BlockTableRecord space,
+        Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId)
+    {
+        var p1 = new Point3d(center.X - radius, center.Y, 0);   // 左圆周点(箭头)
+        var p2 = new Point3d(center.X + radius, center.Y, 0);   // 右圆周点(箭头)
+        using var dim = new DiametricDimension(p1, p2, 0.0, "", dimStyleId);
+        DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, txt);
     }
 
     /// <summary>国标"折线引出线"直径标注：实心箭头从圆周引出，先斜线段(约 45°)再折成

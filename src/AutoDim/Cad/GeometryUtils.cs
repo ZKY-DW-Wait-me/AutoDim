@@ -74,8 +74,13 @@ internal static class GeometryUtils
             }
         }
 
-        bool skipW = Covers(bottomIntervals, minX, maxX, tol) || Covers(topIntervals, minX, maxX, tol);
-        bool skipH = Covers(leftIntervals, minY, maxY, tol) || Covers(rightIntervals, minY, maxY, tol);
+        // 只有当该方向最外边是"≥2 段拼接覆盖"时才跳过总体：分段会标出各段、尺寸链隐含总宽。
+        // 单条整边(如简单矩形底边)会被 OutlineDimensioner 当作最外边跳过分段、总体必须标，
+        // 否则两个逻辑互踢 -> 矩形 0 尺寸(总体 skip + 分段 skip 全落空)。
+        bool skipW = (bottomIntervals.Count >= 2 && Covers(bottomIntervals, minX, maxX, tol)) ||
+                     (topIntervals.Count >= 2 && Covers(topIntervals, minX, maxX, tol));
+        bool skipH = (leftIntervals.Count >= 2 && Covers(leftIntervals, minY, maxY, tol)) ||
+                     (rightIntervals.Count >= 2 && Covers(rightIntervals, minY, maxY, tol));
         return (skipW, skipH);
     }
 

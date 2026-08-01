@@ -64,7 +64,8 @@ internal static class OutlineDimensioner
             if (cands.Count > MaxSegDims)
                 cands = cands.GetRange(0, MaxSegDims);
             foreach (var (i, _) in cands)
-                seg += AnnotateLine(db, tr, space, pl, i, (i + 1) % n, centroid, dimStyleId, layerId, baseGap);
+                seg += AnnotateSegment(db, tr, space, pl.GetPoint2dAt(i), pl.GetPoint2dAt((i + 1) % n),
+                                       centroid, dimStyleId, layerId, baseGap);
 
             // 圆弧段：先收集，按"圆心+半径"去重(同一圆被拆成多段弧时只标一次)，
             // 再按半径从大到小取前 MaxArcDims 条（R 引线是重叠大户，小圆角不逐个标）
@@ -125,6 +126,30 @@ internal static class OutlineDimensioner
                 }
             }
         }
+
+        // 独立 Line（用户用 LINE 画的开放轮廓/散线——test4 全是这种）：逐条标长度，
+        // 共用 seenSeg 去重(与面共享边不重复标)；只取最长的 MaxSegDims 条防止碎线刷屏。
+        var lineCands = new List<(Point2d A, Point2d B, double Len)>();
+        foreach (var id in ids)
+        {
+            if (tr.GetObject(id, OpenMode.ForRead) is not Line ln) continue;
+            var la = new Point2d(ln.StartPoint.X, ln.StartPoint.Y);
+            var lb = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
+            double len = (lb - la).Length;
+            if (len < minSegLen) continue;
+            var key = la.X < lb.X || (la.X == lb.X && la.Y <= lb.Y) ? (la, lb) : (lb, la);
+            if (!seenSeg.Add(key)) continue;
+            lineCands.Add((la, lb, len));
+        }
+        lineCands.Sort((x, y) => y.Len.CompareTo(x.Len));
+        if (lineCands.Count > MaxSegDims)
+            lineCands = lineCands.GetRange(0, MaxSegDims);
+        Point2d gCentroid = ext.HasValue
+            ? new Point2d((ext.Value.MinPoint.X + ext.Value.MaxPoint.X) * 0.5,
+                          (ext.Value.MinPoint.Y + ext.Value.MaxPoint.Y) * 0.5)
+            : new Point2d(0, 0);
+        foreach (var (la, lb, _) in lineCands)
+            seg += AnnotateSegment(db, tr, space, la, lb, gCentroid, dimStyleId, layerId, baseGap);
         return (seg, arc);
     }
 
@@ -161,10 +186,9 @@ internal static class OutlineDimensioner
 
     // ---------- 直线段（含斜边智能判断） ----------
 
-    private static int AnnotateLine(Database db, Transaction tr, BlockTableRecord space,
-        Polyline pl, int i, int j, Point2d centroid, ObjectId dimStyleId, ObjectId layerId, double baseGap)
+    private static int AnnotateSegment(Database db, Transaction tr, BlockTableRecord space,
+        Point2d a, Point2d b, Point2d centroid, ObjectId dimStyleId, ObjectId layerId, double baseGap)
     {
-        Point2d a = pl.GetPoint2dAt(i), b = pl.GetPoint2dAt(j);
         Vector2d d = b - a;
         double dx = System.Math.Abs(d.X), dy = System.Math.Abs(d.Y);
 

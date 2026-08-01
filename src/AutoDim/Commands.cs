@@ -344,6 +344,7 @@ public sealed class Commands
                 }
             SetLayerOff(db, tr, LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN_L", 9));
             int open = 0;
+            var openIds = new List<ObjectId>();
             foreach (var s in res.CleanedSegments)
             {
                 if (s.A.DistanceTo(s.B) < co.MinKeepLength) continue;
@@ -355,8 +356,11 @@ public sealed class Commands
                 {
                     Layer = "ADIM_CLEAN_L"
                 };
-                ms.AppendEntity(ln);
+                var lnId = ms.AppendEntity(ln);
                 tr.AddNewlyCreatedDBObject(ln, true);
+                drawnIds.Add(lnId);   // 开放线也纳入标注候选：清场/布局/开放组标注都覆盖它
+                drawn++;
+                openIds.Add(lnId);
                 open++;
             }
             tr.Commit();
@@ -492,6 +496,17 @@ public sealed class Commands
                             }
                         }
                     }
+                }
+                // 开放线段(不属于任何闭合面/圆)：独立成组标分段尺寸——用户用 LINE 画的
+                // 开放轮廓/散线在旧逻辑下完全不标注(OutlineDimensioner 只认 Polyline)，
+                // 单线/断口轮廓因此 0 尺寸。开放组只标分段：单条线只出一个长度、
+                // 多条不相连的散线也不会被强行合并出跨部件总体尺寸。
+                if (openIds.Count > 0)
+                {
+                    sumDims += RunEngine(doc, openIds.ToArray(),
+                        new AutoDimOptions { Categories = DimCategory.Segment },
+                        usePersistedCategories: false, purge: false);
+                    dimmedGroups++;
                 }
                 // 布局收尾：整区去重(共享边/重复面被两个面各标一次) + 外推避让(尺寸线沿
                 // 远离被测要素方向外移，上限 2.5×原始偏移，配合 6×gap 清场缓冲区保证幂等)
