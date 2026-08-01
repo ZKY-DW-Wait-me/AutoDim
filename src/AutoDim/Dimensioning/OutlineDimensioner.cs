@@ -94,11 +94,35 @@ internal static class OutlineDimensioner
             dedupArcs = dedupArcs.Where(x => x.R >= 0.5).ToList();
             if (dedupArcs.Count > MaxArcDims)
                 dedupArcs = dedupArcs.GetRange(0, MaxArcDims);
-            foreach (var (i, _, _) in dedupArcs)
+            // 同半径圆角(不同位置，如 4 个角都是 R5)≥3 个：只标一个代表 + "N×R" 注记，
+            // 避免重复标一排相同的 R(GB 圆角阵列注法)
+            var byRadius = new Dictionary<int, List<(int I, double R, Point2d C)>>();
+            foreach (var ac in dedupArcs)
             {
-                int j = (i + 1) % n;
-                AnnotateArc(db, tr, space, pl, i, j, centroid, dimStyleId, layerId, baseGap, ext);
-                arc++;
+                int rk = (int)System.Math.Round(ac.R * 10);
+                if (!byRadius.TryGetValue(rk, out var l))
+                    byRadius[rk] = l = new List<(int, double, Point2d)>();
+                l.Add(ac);
+            }
+            foreach (var grp in byRadius.Values)
+            {
+                if (grp.Count >= 3)
+                {
+                    var rep = grp[0];
+                    int j = (rep.I + 1) % n;
+                    AnnotateArc(db, tr, space, pl, rep.I, j, centroid, dimStyleId, layerId, baseGap, ext);
+                    arc++;
+                    AddRCountNote(db, tr, space, dimStyleId, layerId, grp, pl);
+                }
+                else
+                {
+                    foreach (var ac in grp)
+                    {
+                        int j = (ac.I + 1) % n;
+                        AnnotateArc(db, tr, space, pl, ac.I, j, centroid, dimStyleId, layerId, baseGap, ext);
+                        arc++;
+                    }
+                }
             }
         }
         return (seg, arc);
@@ -178,6 +202,40 @@ internal static class OutlineDimensioner
         var dim = new AlignedDimension(new Point3d(a.X, a.Y, 0), new Point3d(b.X, b.Y, 0),
                                        new Point3d(dl2.X, dl2.Y, 0), "", dimStyleId);
         DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, text);
+    }
+
+    /// <summary>同半径圆角数量注记 "N×R"（内联 Arial，防 txt.shx 缺字形）。</summary>
+    private static void AddRCountNote(Database db, Transaction tr, BlockTableRecord space,
+        ObjectId dimStyleId, ObjectId layerId, List<(int I, double R, Point2d C)> grp, Polyline pl)
+    {
+        // 组内弧中点平均作为注记位置
+        double bx = 0, by = 0;
+        foreach (var (i, r, c) in grp)
+        {
+            var seg = pl.GetArcSegment2dAt(i);
+            double mid = (seg.StartAngle + seg.EndAngle) * 0.5;
+            bx += c.X + r * System.Math.Cos(mid);
+            by += c.Y + r * System.Math.Sin(mid);
+        }
+        bx /= grp.Count; by /= grp.Count;
+        double txtH = 2.5;
+        try
+        {
+            var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
+            txtH = dst.Dimtxt * dst.Dimscale;
+        }
+        catch { }
+        using var mt = new MText();
+        mt.SetDatabaseDefaults(db);
+        // 与 R 引线标注一致：四舍五入到 0.1 后去尾零(如 R1.008 标 R1，注记也写 4×R1)
+        mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{grp.Count}×R{FormatLen(System.Math.Round(grp[0].R, 1))}}}";
+        mt.TextHeight = txtH;
+        mt.Location = new Point3d(bx, by, 0);
+        mt.Attachment = AttachmentPoint.MiddleCenter;
+        mt.LayerId = layerId;
+        space.AppendEntity(mt);
+        tr.AddNewlyCreatedDBObject(mt, true);
+        Cad.AdimMarker.Mark(db, tr, mt);
     }
 
     /// <summary>斜边的单一主投影 RotatedDimension(模式 A')：

@@ -122,4 +122,27 @@ else
     echo "SKIP: 未找到 test2.DWG"
 fi
 
+echo "== 7) 孔板泛化(test3.dwg，1 面 16 孔) =="
+if [ -f "$ROOT/test3.DWG" ]; then
+    SCR4="$ROOT/test/run-headless.test3.scr"
+    cat > "$SCR4" <<EOF
+SECURELOAD
+0
+NETLOAD
+$DLL_WIN
+ADIMCLEAN
+EOF
+    LOG4="$ROOT/test/test3-run.log"
+    "$POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" \
+        -InputDwg "$(cygpath -w "$ROOT/test3.DWG")" -Script "$(cygpath -w "$SCR4")" \
+        -Log "$(cygpath -w "$LOG4")" -TimeoutSec 90
+    rm -f "$SCR4"
+    CLEAN4="$(tr -d '\000' < "$LOG4")"
+    echo "$CLEAN4" | grep -q "ADIMCLEAN:" || { echo "FAIL: test3 未执行清洗"; fail=1; }
+    t4="$(echo "$CLEAN4" | sed -n 's/.*landed=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    { [ -n "$t4" ] && [ "$t4" -gt 0 ]; } || { echo "FAIL: test3 标注数为 0"; fail=1; }
+else
+    echo "SKIP: 未找到 test3.DWG"
+fi
+
 if [ "$fail" = "0" ]; then echo "== PASS =="; exit 0; else echo "== TESTS FAILED =="; exit 1; fi
