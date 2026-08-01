@@ -29,6 +29,10 @@ internal static class OutlineDimensioner
         // 短碎边不标：相对该轮廓尺度自适应（0.35×偏移量），下限 2mm——
         // 过滤矢量化噪声的亚毫米/毫米级碎段（test.dwg 的 1.25mm 级分段即此类）
         double minSegLen = System.Math.Max(2.0, baseGap * 0.35);
+        // 跨面去重：同一几何边被两个相邻面共享(槽边/端头弧)时会各标一次，
+        // 组内只标一次(国标不重复标注共享边)
+        var seenSeg = new HashSet<(Point2d, Point2d)>();
+        var seenArc = new HashSet<(Point2d, Point2d)>();
 
         foreach (var id in ids)
         {
@@ -49,6 +53,11 @@ internal static class OutlineDimensioner
                 if (System.Math.Abs(pl.GetBulgeAt(i)) >= 1e-9) continue;
                 double len = (pl.GetPoint2dAt(j) - pl.GetPoint2dAt(i)).Length;
                 if (len < minSegLen) continue;
+                // 同一边反向/跨面共享只标一次(退化面与相邻共享面都会产生重复边)
+                var a = pl.GetPoint2dAt(i);
+                var b = pl.GetPoint2dAt(j);
+                var key = a.X < b.X || (a.X == b.X && a.Y <= b.Y) ? (a, b) : (b, a);
+                if (!seenSeg.Add(key)) continue;
                 cands.Add((i, len));
             }
             cands.Sort((x, y) => y.Len.CompareTo(x.Len));
@@ -57,20 +66,35 @@ internal static class OutlineDimensioner
             foreach (var (i, _) in cands)
                 seg += AnnotateLine(db, tr, space, pl, i, (i + 1) % n, centroid, dimStyleId, layerId, baseGap);
 
-            // 圆弧段：按半径从大到小取前 MaxArcDims 条（R 引线是重叠大户，小圆角不逐个标）
-            var arcCands = new List<(int I, double R)>();
+            // 圆弧段：先收集，按"圆心+半径"去重(同一圆被拆成多段弧时只标一次)，
+            // 再按半径从大到小取前 MaxArcDims 条（R 引线是重叠大户，小圆角不逐个标）
+            var arcCands = new List<(int I, double R, Point2d C)>();
             for (int i = 0; i < n; i++)
             {
                 if (!pl.Closed && i == n - 1) break;
                 if (System.Math.Abs(pl.GetBulgeAt(i)) < 1e-9) continue;
-                arcCands.Add((i, pl.GetArcSegment2dAt(i).Radius));
+                var aa = pl.GetPoint2dAt(i);
+                var bb = pl.GetPoint2dAt((i + 1) % n);
+                var ak = aa.X < bb.X || (aa.X == bb.X && aa.Y <= bb.Y) ? (aa, bb) : (bb, aa);
+                if (!seenArc.Add(ak)) continue;   // 共享弧(相邻面)只标一次
+                var arcSeg = pl.GetArcSegment2dAt(i);
+                arcCands.Add((i, arcSeg.Radius, arcSeg.Center));
             }
-            arcCands.Sort((x, y) => y.R.CompareTo(x.R));
+            var seenCircle = new HashSet<(int, int, int)>();
+            var dedupArcs = new List<(int I, double R, Point2d C)>();
+            foreach (var ac in arcCands.OrderByDescending(x => x.R))
+            {
+                var ck = ((int)System.Math.Round(ac.C.X * 10),
+                          (int)System.Math.Round(ac.C.Y * 10),
+                          (int)System.Math.Round(ac.R * 10));
+                if (!seenCircle.Add(ck)) continue;  // 同一圆的多段弧只标一次
+                dedupArcs.Add(ac);
+            }
             // 残弧过滤：聚类/吸附可能产生 r<0.5mm 的微弧（扫描噪声），R 标注无意义
-            arcCands = arcCands.Where(c => c.R >= 0.5).ToList();
-            if (arcCands.Count > MaxArcDims)
-                arcCands = arcCands.GetRange(0, MaxArcDims);
-            foreach (var (i, _) in arcCands)
+            dedupArcs = dedupArcs.Where(x => x.R >= 0.5).ToList();
+            if (dedupArcs.Count > MaxArcDims)
+                dedupArcs = dedupArcs.GetRange(0, MaxArcDims);
+            foreach (var (i, _, _) in dedupArcs)
             {
                 int j = (i + 1) % n;
                 AnnotateArc(db, tr, space, pl, i, j, centroid, dimStyleId, layerId, baseGap, ext);

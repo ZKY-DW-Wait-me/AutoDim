@@ -28,13 +28,17 @@ public static class Cleaning
             bool flip = b.X < a.X || (b.X == a.X && b.Y < a.Y);
             var key = flip ? (b, a) : (a, b);
             bl = flip ? -bl : bl;
+            // Seg 必须存"翻转后的方向"(方向与 bulge 符号一致)，否则 PlanarGraph 重建
+            // 圆弧时符号错、圆心跑到弧的另一侧(端头上半弧 R6 圆心 (20.6,54.8) 的根因)
+            var sa = flip ? b : a;
+            var sb = flip ? a : b;
             if (seen.TryGetValue(key, out var existing))
             {
                 if (existing.Bulge == 0 && bl != 0)
-                    seen[key] = new Seg(a, b, bl);
+                    seen[key] = new Seg(sa, sb, bl);
                 continue;
             }
-            seen[key] = new Seg(a, b, bl);
+            seen[key] = new Seg(sa, sb, bl);
         }
 
         // 2) 只合并直线段，圆弧弦原样保留
