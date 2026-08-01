@@ -12,6 +12,7 @@ obj/
 __pycache__/
 *.pyc
 test/samples/*.dwg
+test/test_annotated.dwg
 test/*.log
 test/*.log.err
 test/*.generated.scr
