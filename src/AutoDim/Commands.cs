@@ -256,7 +256,9 @@ public sealed class Commands
             // ADIMCLN 调紧(SnapTol=0.5 等)。
             var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4], linkGap);
             var res = ContourExtractor.Process(segs, circles, co);
-            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN", 8);   // 灰色：清洗结果低调显示
+            // 清洗中间层：仅供内部测量(散线→闭合轮廓)，默认关闭不显示——
+            // 用户看到的是"原图 + 标注"，不需要"抄一遍"的中间结果
+            SetLayerOff(db, tr, LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN", 8));
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
@@ -299,7 +301,7 @@ public sealed class Commands
                     var b = f.Points[(i + 1) % f.Points.Length];
                     faceKeys.Add(a.X < b.X || (a.X == b.X && a.Y <= b.Y) ? (a, b) : (b, a));
                 }
-            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN_L", 9); // 浅灰：开放链碎片
+            SetLayerOff(db, tr, LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN_L", 9));
             int open = 0;
             foreach (var s in res.CleanedSegments)
             {
@@ -490,6 +492,18 @@ public sealed class Commands
     {
         if (layer is "ADIM" or "ADIM_CLEAN" or "ADIM_CLEAN_L" or "ADIM_CENTER" or "Defpoints") return true;
         return layer.Contains("中心线") || layer.Contains("虚线") || layer.Contains("点划线");
+    }
+
+    /// <summary>把图层设为关闭(IsOff)：实体仍可被程序读取测量，但图形不显示。</summary>
+    private static void SetLayerOff(Database db, Transaction tr, ObjectId layerId)
+    {
+        try
+        {
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            if (tr.GetObject(layerId, OpenMode.ForWrite) is LayerTableRecord rec)
+                rec.IsOff = true;
+        }
+        catch { }
     }
 
     /// <summary>清洗参数命令：逐个输入 吸附公差/合并公差/最短保留长度/最小面积/最大细长度（0=恢复默认）。</summary>
