@@ -420,10 +420,33 @@ public sealed class Commands
                         }
                         if (otherIds.Count > 0)
                         {
-                            sumDims += RunEngine(doc, otherIds.ToArray(),
-                                new AutoDimOptions { Categories = DimCategory.Overall },
-                                usePersistedCategories: false, purge: false);
-                            dimmedGroups++;
+                            // 其余小面若与主面"连体"(包围盒重叠度高)，总体尺寸已被主面标过，
+                            // 再标就是重复(测量点略异时布局去重删不掉)——跳过
+                            using (Transaction trO = db.TransactionManager.StartTransaction())
+                            {
+                                Extents3d? mExt = Cad.GeometryUtils.CombinedExtents(trO, mainIds.ToArray());
+                                Extents3d? oExt = Cad.GeometryUtils.CombinedExtents(trO, otherIds.ToArray());
+                                double overlap = 0;
+                                if (mExt.HasValue && oExt.HasValue)
+                                {
+                                    var a = mExt.Value; var b = oExt.Value;
+                                    double ix = Math.Min(a.MaxPoint.X, b.MaxPoint.X) - Math.Max(a.MinPoint.X, b.MinPoint.X);
+                                    double iy = Math.Min(a.MaxPoint.Y, b.MaxPoint.Y) - Math.Max(a.MinPoint.Y, b.MinPoint.Y);
+                                    if (ix > 0 && iy > 0)
+                                    {
+                                        double aw = a.MaxPoint.X - a.MinPoint.X, ah = a.MaxPoint.Y - a.MinPoint.Y;
+                                        overlap = (ix * iy) / Math.Max(1e-9, aw * ah);
+                                    }
+                                }
+                                trO.Commit();
+                                if (overlap < 0.6)
+                                {
+                                    sumDims += RunEngine(doc, otherIds.ToArray(),
+                                        new AutoDimOptions { Categories = DimCategory.Overall },
+                                        usePersistedCategories: false, purge: false);
+                                    dimmedGroups++;
+                                }
+                            }
                         }
                     }
                 }

@@ -86,8 +86,19 @@ internal static class CircleDimensioner
                     new RadialDimension(c0.Center, chordPt, c0.Radius * 0.8, txt, dimStyleId), dimStyleId, layerId);
                 dia++;
             }
-            else if (ext != null)
+            else
             {
+                // 多孔桶：代表孔仍标一个 Ø 引线(指明直径指向哪里)，其余孔用 N×Ød 注记
+                // 表达数量——否则只有注记、孔看起来"漏标"
+                var c0 = list[0];
+                double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
+                var dir = new Vector3d(System.Math.Cos(ang), System.Math.Sin(ang), 0);
+                Point3d chordPt = c0.Center + dir * c0.Radius;
+                string txt = "%%c" + FormatLen(c0.Radius * 2.0);
+                DimUtil.Append(db, tr, space,
+                    new RadialDimension(c0.Center, chordPt, c0.Radius * 0.8, txt, dimStyleId), dimStyleId, layerId);
+                dia++;
+                if (ext == null) continue;
                 double bx = 0, by = 0;
                 foreach (var c in list) { bx += c.Center.X; by += c.Center.Y; }
                 bx /= list.Count; by /= list.Count;

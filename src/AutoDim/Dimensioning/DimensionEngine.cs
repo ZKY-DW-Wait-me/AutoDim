@@ -97,7 +97,13 @@ internal static class DimensionEngine
         r.SkipW = skipW; r.SkipH = skipH;
 
         if (opt.Categories.HasFlag(DimCategory.Overall))
-            r.Overall = OverallDimensioner.Annotate(db, tr, space, ext, dimStyleId, layerId, baseGap, skipW, skipH);
+        {
+            var (left, right, bottom, top) = ext.HasValue
+                ? OverallDimensioner.OutlineEdgePoints(tr, ids, ext.Value)
+                : (null, null, null, null);
+            r.Overall = OverallDimensioner.Annotate(db, tr, space, ext, left, right, bottom, top,
+                                                    dimStyleId, layerId, baseGap, skipW, skipH);
+        }
 
         if (opt.Categories.HasFlag(DimCategory.Holes))
         {

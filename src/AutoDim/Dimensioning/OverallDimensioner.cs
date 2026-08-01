@@ -34,8 +34,40 @@ internal static class DimUtil
 /// </summary>
 internal static class OverallDimensioner
 {
+    /// <summary>轮廓边界点：包围盒各边上"真实存在的轮廓顶点"——总体尺寸的界线必须
+    /// 接触图形。圆弧端头零件的角点(minX,bottomY)往往不存在，直接引线会悬空。</summary>
+    public static (Point3d? Left, Point3d? Right, Point3d? Bottom, Point3d? Top) OutlineEdgePoints(
+        Transaction tr, IReadOnlyList<ObjectId> ids, Extents3d ext)
+    {
+        double minX = ext.MinPoint.X, maxX = ext.MaxPoint.X;
+        double minY = ext.MinPoint.Y, maxY = ext.MaxPoint.Y;
+        Point3d? left = null, right = null, bottom = null, top = null;
+        double dl = double.MaxValue, dr = double.MaxValue, db = double.MaxValue, dt = double.MaxValue;
+        foreach (var id in ids)
+        {
+            if (tr.GetObject(id, OpenMode.ForRead) is not Polyline pl) continue;
+            int n = pl.NumberOfVertices;
+            for (int i = 0; i < n; i++)
+            {
+                var p = pl.GetPoint2dAt(i);
+                var p3 = new Point3d(p.X, p.Y, 0);
+                double ld = System.Math.Abs(p.X - minX);
+                if (ld < dl) { dl = ld; left = p3; }
+                double rd = System.Math.Abs(p.X - maxX);
+                if (rd < dr) { dr = rd; right = p3; }
+                double bd = System.Math.Abs(p.Y - minY);
+                if (bd < db) { db = bd; bottom = p3; }
+                double td = System.Math.Abs(p.Y - maxY);
+                if (td < dt) { dt = td; top = p3; }
+            }
+        }
+        return (left, right, bottom, top);
+    }
+
     public static int Annotate(Database db, Transaction tr, BlockTableRecord space,
-                               Extents3d? ext, ObjectId dimStyleId, ObjectId layerId, double baseGap,
+                               Extents3d? ext, Point3d? left, Point3d? right,
+                               Point3d? bottom, Point3d? top,
+                               ObjectId dimStyleId, ObjectId layerId, double baseGap,
                                bool skipWidth = false, bool skipHeight = false)
     {
         if (ext == null) return 0;
@@ -49,16 +81,19 @@ internal static class OverallDimensioner
 
         if (w > 1e-9 && !skipWidth)
         {
-            var p1 = new Point3d(min.X, min.Y, 0);
-            var p2 = new Point3d(max.X, min.Y, 0);
+            // 宽度尺寸：界线从"最左/最右轮廓点"引到下方尺寸线(接触图形)，
+            // 而不是不存在的包围盒角点(圆弧端头零件的角点悬空)
+            var p1 = left ?? new Point3d(min.X, min.Y, 0);
+            var p2 = right ?? new Point3d(max.X, min.Y, 0);
             var dl = new Point3d((min.X + max.X) * 0.5, min.Y - off, 0);
             DimUtil.Append(db, tr, space, new RotatedDimension(0.0, p1, p2, dl, "", dimStyleId), dimStyleId, layerId, FormatLen(w));
             count++;
         }
         if (h > 1e-9 && !skipHeight)
         {
-            var p1 = new Point3d(min.X, min.Y, 0);
-            var p2 = new Point3d(min.X, max.Y, 0);
+            // 高度尺寸：界线从"最下/最上轮廓点"引到左侧尺寸线(接触图形)
+            var p1 = bottom ?? new Point3d(min.X, min.Y, 0);
+            var p2 = top ?? new Point3d(min.X, max.Y, 0);
             var dl = new Point3d(min.X - off, (min.Y + max.Y) * 0.5, 0);
             DimUtil.Append(db, tr, space, new RotatedDimension(System.Math.PI * 0.5, p1, p2, dl, "", dimStyleId), dimStyleId, layerId, FormatLen(h));
             count++;
