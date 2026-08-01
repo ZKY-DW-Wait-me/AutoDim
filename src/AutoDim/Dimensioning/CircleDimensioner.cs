@@ -41,7 +41,6 @@ internal static class CircleDimensioner
         cx /= circles.Count;
         cy /= circles.Count;
         var centroid = new Point3d(cx, cy, 0);
-        double midX = ext.HasValue ? (ext.Value.MinPoint.X + ext.Value.MaxPoint.X) * 0.5 : centroid.X;
         var buckets = new List<List<Circle>>();
         foreach (var c in circles)
         {
@@ -82,29 +81,7 @@ internal static class CircleDimensioner
                 string txt = group.Count > 1
                     ? $"{group.Count}×Ø{FormatLen(rep.Radius * 2.0)}"
                     : "Ø" + FormatLen(rep.Radius * 2.0);
-                // 大圆：过圆心直线 + 两端箭头(DiametricDimension，GB 标准直径注法)。
-                // 判定：圆直径能否容纳"文字 + 两端箭头 + 间隙"；放不下(小孔)退回折线引出线。
-                double dimTxtH = 2.5, dimAsz = 2.5;
-                try
-                {
-                    var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
-                    dimTxtH = dst.Dimtxt * dst.Dimscale;
-                    dimAsz = dst.Dimasz * dst.Dimscale;
-                }
-                catch { }
-                double fitTextW = 0.7 * dimTxtH * txt.Length;
-                double fitAsz = System.Math.Min(System.Math.Max(0.6, rep.Radius * 0.9), dimAsz);
-                // 圆直径 >= 文字宽 + 两端箭头 + 0.5 间隙 即可过圆心标注(GB 标准直径注法)；
-                // 旧阈值 +2.0 间隙太苛刻，Ø6 这类中等圆也被误归到引出线。小孔(Ø1.55 等)
-                // 文字+箭头放不下仍走引出线。
-                if (rep.Radius * 2.0 >= fitTextW + 2 * fitAsz + 0.5)
-                {
-                    AddDiameterDim(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId);
-                }
-                else
-                {
-                    AddDiameterLeader(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId, midX);
-                }
+                AddDiameterDim(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId);
                 dia++;
             }
         }
@@ -327,26 +304,11 @@ internal static class CircleDimensioner
         return true;
     }
 
-    /// <summary>国标标准直径注法：尺寸线过圆心、两端实心箭头指向圆周、文字在尺寸线中间
-    /// 上方(ADIM 样式 Dimtix/Dimtad 已固化)。圆直径足够容纳文字+箭头时用此形式，
-    /// 小孔文字放不下时改用折线引出线(AddDiameterLeader)。</summary>
+    /// <summary>国标直径注法：尺寸线过圆心且两端超出圆周，圆外两端各一个实心小箭头、
+    /// 箭头尖端指向圆心，文字写在尺寸线中间上方。尺寸线必须超出圆外(用户明确要求)，
+    /// AutoCAD 的 DiametricDimension 尺寸线不超出圆周，故用 Line+Solid+MText 自绘。</summary>
     private static void AddDiameterDim(Database db, Transaction tr, BlockTableRecord space,
         Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId)
-    {
-        var p1 = new Point3d(center.X - radius, center.Y, 0);   // 左圆周点(箭头)
-        var p2 = new Point3d(center.X + radius, center.Y, 0);   // 右圆周点(箭头)
-        using var dim = new DiametricDimension(p1, p2, 0.0, "", dimStyleId);
-        DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, txt);
-    }
-
-    /// <summary>国标"折线引出线"直径标注：实心箭头从圆周引出，先斜线段(约 45°)再折成
-    /// 水平直线，文字 ⌀d 写在水平线段上方居中。用 Line+Solid+MText 组合——小孔的文字
-    /// 比圆大，"过圆心两端箭头+中间文字"放不下，折线引出线是 GB 标准注法。
-    /// 孔在中轴线右侧时向左引出，避免文字飞出图外。
-    /// 箭头/斜线随孔尺寸自适应：小孔配小箭头、短斜线(旧版固定按 baseGap 甩长线+默认
-    /// 2.5mm 箭头，0.8mm 半径的孔上画 1.25mm 箭头+6.7mm 斜线，严重不成比例)。</summary>
-    private static void AddDiameterLeader(Database db, Transaction tr, BlockTableRecord space,
-        Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double midX)
     {
         double defAsz = 2.5, txtH = 2.5;
         ObjectId textStyleId = ObjectId.Null;
@@ -358,17 +320,27 @@ internal static class CircleDimensioner
             textStyleId = dst.Dimtxsty;   // ADIM 样式的国标文字样式
         }
         catch { }
-        int dir = center.X >= midX ? -1 : 1;   // 孔在图中轴线右侧 -> 向左引出，否则向右
-        // 折线：圆周点(箭头) -> 斜线45° -> 水平线(文字区)
-        // 箭头：随孔缩小(约 0.9×半径，下限 0.6 保证可见)，绝不大于默认标注箭头
+        // 箭头随孔缩小(约 0.9×半径，下限 0.6 保证可见)，不超过默认标注箭头
         double asz = System.Math.Clamp(radius * 0.9, 0.6, defAsz);
-        // 斜线：与箭头成比例(45°斜线两直角边 ≈ 2.2×箭头)，小孔不再甩长线
-        double slope = System.Math.Clamp(asz * 2.2, 1.5, System.Math.Max(1.5, radius * 2.0));
-        var pCirc = new Point3d(center.X + dir * radius, center.Y, 0);              // 箭头尖端(圆周)
-        var pBend = new Point3d(pCirc.X + dir * slope, pCirc.Y + slope, 0);         // 折点(斜线转水平)
+        double over = asz;   // 尺寸线超出圆周的量 = 箭头长(箭尾在圆外)
 
-        // 文字：先以临时位置创建并读实际渲染宽度，水平线长度按"文字宽+两端余量"自适应，
-        // 不再用 0.7×高×字符数的粗略估算(实际 SHX 字形宽度与估算偏差大，线过长或过短)
+        // 尺寸线：过圆心、两端超出圆周
+        var p1 = new Point3d(center.X - radius - over, center.Y, 0);
+        var p2 = new Point3d(center.X + radius + over, center.Y, 0);
+        using var ln = new Line(p1, p2);
+        ln.SetDatabaseDefaults(db);
+        ln.LayerId = layerId;
+        space.AppendEntity(ln);
+        tr.AddNewlyCreatedDBObject(ln, true);
+        Cad.AdimMarker.Mark(db, tr, ln);
+
+        // 两端箭头：尖端在圆周、箭尾在圆外，箭头方向指向圆心
+        AddArrowHead(db, tr, space, new Point3d(center.X - radius, center.Y, 0),
+                     new Vector3d(1, 0, 0), asz, layerId);
+        AddArrowHead(db, tr, space, new Point3d(center.X + radius, center.Y, 0),
+                     new Vector3d(-1, 0, 0), asz, layerId);
+
+        // 文字：尺寸线中间上方(国标直径注法)
         using var mt = new MText();
         mt.SetDatabaseDefaults(db);
         if (!textStyleId.IsNull)
@@ -377,53 +349,31 @@ internal static class CircleDimensioner
         mt.TextHeight = txtH;
         mt.Attachment = AttachmentPoint.MiddleCenter;
         mt.LayerId = layerId;
-        mt.Location = center;   // 临时位置，仅用于读渲染宽度
-        double textW = System.Math.Max(8.0, 0.7 * txtH * txt.Length);              // 回退估算
-        try
-        {
-            var ge = mt.GeometricExtents;
-            double w = ge.MaxPoint.X - ge.MinPoint.X;
-            if (w > 0.5) textW = w + System.Math.Max(1.0, txtH * 0.8);              // 两端各留 ~1mm
-        }
-        catch { }
-        var pEnd = new Point3d(pBend.X + dir * textW, pBend.Y, 0);                  // 水平线末端
+        mt.Location = new Point3d(center.X, center.Y + txtH * 0.6, 0);
+        space.AppendEntity(mt);
+        tr.AddNewlyCreatedDBObject(mt, true);
+        Cad.AdimMarker.Mark(db, tr, mt);
+    }
 
-        // 实心箭头：尖端在圆周，沿斜线方向指向圆心
-        double aLen = pBend.X - pCirc.X, aH = pBend.Y - pCirc.Y;
-        double aN = System.Math.Sqrt(aLen * aLen + aH * aH);
-        double ux = aLen / aN, uy = aH / aN;   // 斜线方向(从圆向外)
+    /// <summary>实心箭头：尖端在 tip(圆周)，箭尾在 dirOut 反方向 asz 处(圆外)，
+    /// 即箭头由外指向圆周/圆心。</summary>
+    private static void AddArrowHead(Database db, Transaction tr, BlockTableRecord space,
+        Point3d tip, Vector3d dirOut, double asz, ObjectId layerId)
+    {
+        var baseC = tip - dirOut * asz;                       // 箭尾基底中心(圆外)
+        var perp = new Vector3d(-dirOut.Y, dirOut.X, 0);      // 垂直方向
         using var solid = new Solid();
         solid.SetDatabaseDefaults(db);
-        solid.SetPointAt(0, new Point3d(pCirc.X - ux * asz - (-uy) * asz * 0.5,
-                                        pCirc.Y - uy * asz - ux * asz * 0.5, 0));
-        solid.SetPointAt(1, new Point3d(pCirc.X - ux * asz + (-uy) * asz * 0.5,
-                                        pCirc.Y - uy * asz + ux * asz * 0.5, 0));
-        solid.SetPointAt(2, new Point3d(pCirc.X, pCirc.Y, 0));
-        solid.SetPointAt(3, new Point3d(pCirc.X, pCirc.Y, 0));
+        solid.SetPointAt(0, new Point3d(baseC.X + perp.X * asz * 0.5,
+                                        baseC.Y + perp.Y * asz * 0.5, 0));
+        solid.SetPointAt(1, new Point3d(baseC.X - perp.X * asz * 0.5,
+                                        baseC.Y - perp.Y * asz * 0.5, 0));
+        solid.SetPointAt(2, tip);
+        solid.SetPointAt(3, tip);
         solid.LayerId = layerId;
         space.AppendEntity(solid);
         tr.AddNewlyCreatedDBObject(solid, true);
         Cad.AdimMarker.Mark(db, tr, solid);
-
-        // 斜线段 + 水平段
-        using var ln1 = new Line(pCirc, pBend);
-        ln1.SetDatabaseDefaults(db);
-        ln1.LayerId = layerId;
-        space.AppendEntity(ln1);
-        tr.AddNewlyCreatedDBObject(ln1, true);
-        Cad.AdimMarker.Mark(db, tr, ln1);
-        using var ln = new Line(pBend, pEnd);
-        ln.SetDatabaseDefaults(db);
-        ln.LayerId = layerId;
-        space.AppendEntity(ln);
-        tr.AddNewlyCreatedDBObject(ln, true);
-        Cad.AdimMarker.Mark(db, tr, ln);
-
-        // 文字：水平线段上方居中、水平(位置在上一步定好的水平线上方)
-        mt.Location = new Point3d(pBend.X + dir * textW * 0.5, pBend.Y + txtH * 0.6, 0);
-        space.AppendEntity(mt);
-        tr.AddNewlyCreatedDBObject(mt, true);
-        Cad.AdimMarker.Mark(db, tr, mt);
     }
 
     /// <summary>相邻位置点间距是否全部 &gt;= MinChainGap（否则链文字互相压）。</summary>
