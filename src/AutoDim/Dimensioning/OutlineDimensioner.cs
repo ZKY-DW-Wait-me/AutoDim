@@ -244,7 +244,9 @@ internal static class OutlineDimensioner
 
         // 引线长度：外延一段，文字坐在末端(GB 圆角标注：圆心->弧中点->外延引线->R文字)。
         double leader = System.Math.Max(baseGap * 0.6, r * 0.4);
-        string txt = "R" + FormatLen(r);
+        // 圆弧半径按名义值显示(四舍五入到 0.1，去尾零)：R6.008 标成 R6 而非 R6.01，
+        // 更接近人工标注习惯(公差另注)
+        string txt = "R" + FormatLen(System.Math.Round(r, 1));
         var dim = new RadialDimension(center, chord, leader, txt, dimStyleId);
         DimUtil.Append(db, tr, space, dim, dimStyleId, layerId);
 
