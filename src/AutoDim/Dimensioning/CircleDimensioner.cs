@@ -30,41 +30,59 @@ internal static class CircleDimensioner
         int dia = 0, pos = 0;
 
         // —— 直径标注（GB 水平引出线注法，文字与标注一体）——
-        // 从圆周引一条水平引出线(箭头指向圆周)，文字写在引出线末端上方、水平横放。
-        // 单孔文字为 ⌀d；重复孔文字直接写 "N×Ød"(数量×直径)——不再另放独立注记，
-        // 否则文字离孔远、不知道对应哪个标注(用户反馈"完全分家")。
-        // 同一直径(0.1mm 精度分桶)：桶内只有 1 个孔 -> 标 Ø；桶内 ≥2 个 ->
-        // 代表孔标 Ø + MText 注记 "N×Ød"。
+        // 流程：直径容差分桶 -> 桶内按空间位置聚类分组 -> 每组选一个代表孔标 "N×Ød"。
+        //   * 容差分桶：SW 导出的半径带浮点误差(如 0.8249999999999886 vs 0.825000000000017)，
+        //     旧的 r*20 取整会在 0.05 边界把同一规格孔劈成两个桶(1.65 变成 6+2)，必须容差合并。
+        //   * 空间分组：同直径但位置不同的孔(远处孔组/独立孔)必须分开标注——
+        //     test3 的 1.55 孔是"下方 6 个 + 上方远处 2 个"，不能合并成 8×Ø1.55。
+        //   * 每组标一个代表孔，文字 "N×Ød"(N=组内孔数)；组内其余孔不再重复标(阵列注法)。
         double cx = 0, cy = 0;
         foreach (var c in circles) { cx += c.Center.X; cy += c.Center.Y; }
         cx /= circles.Count;
         cy /= circles.Count;
         var centroid = new Point3d(cx, cy, 0);
-        var buckets = new Dictionary<int, List<Circle>>();
+        double midX = ext.HasValue ? (ext.Value.MinPoint.X + ext.Value.MaxPoint.X) * 0.5 : centroid.X;
+        var buckets = new List<List<Circle>>();
         foreach (var c in circles)
         {
-            int key = (int)System.Math.Round(c.Radius * 20.0);   // 直径 0.1mm 精度
-            if (!buckets.TryGetValue(key, out var list))
-                buckets[key] = list = new List<Circle>();
-            list.Add(c);
+            var bucket = buckets.FirstOrDefault(b => System.Math.Abs(b[0].Radius - c.Radius) < 0.005);
+            if (bucket == null)
+            {
+                bucket = new List<Circle>();
+                buckets.Add(bucket);
+            }
+            bucket.Add(c);
         }
 
-        foreach (var kv in buckets.OrderBy(kv => kv.Key))
+        foreach (var bucket in buckets)
         {
-            var list = kv.Value;
-            if (list.Count == 1)
+            var groups = ClusterByPosition(bucket);
+            // 镜像对称合并：左右对称的两组(孔数相同、关于竖直轴对称)合并为 1 组标注，
+            // N=两组合计(如左右各 2×2 -> 8×Ød；上方对称单孔对 -> 2×Ød)。国标对称件注法。
+            var merged = new bool[groups.Count];
+            for (int i = 0; i < groups.Count; i++)
             {
-                var c0 = list[0];
-                string txt = "Ø" + FormatLen(c0.Radius * 2.0);
-                AddDiameterLeader(db, tr, space, c0.Center, c0.Radius, txt, dimStyleId, layerId, baseGap);
-                dia++;
+                if (merged[i]) continue;
+                for (int j = i + 1; j < groups.Count; j++)
+                {
+                    if (merged[j]) continue;
+                    if (IsMirrorPair(groups[i], groups[j], 0.05))
+                    {
+                        groups[i].AddRange(groups[j]);
+                        merged[j] = true;
+                    }
+                }
             }
-            else
+            for (int g = 0; g < groups.Count; g++)
             {
-                // 多孔桶：代表孔的引出线文字直接写 "N×Ød"（数量×直径，文字与标注一体）
-                var c0 = list[0];
-                string txt = $"{list.Count}×Ø{FormatLen(c0.Radius * 2.0)}";
-                AddDiameterLeader(db, tr, space, c0.Center, c0.Radius, txt, dimStyleId, layerId, baseGap);
+                if (merged[g]) continue;
+                var group = groups[g];
+                // 代表孔：组内最左下(引出线向右上展开；孔在中轴线右侧时 AddDiameterLeader 自动向左)
+                var rep = group.OrderBy(p => p.Center.X).ThenBy(p => p.Center.Y).First();
+                string txt = group.Count > 1
+                    ? $"{group.Count}×Ø{FormatLen(rep.Radius * 2.0)}"
+                    : "Ø" + FormatLen(rep.Radius * 2.0);
+                AddDiameterLeader(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId, baseGap, midX);
                 dia++;
             }
         }
@@ -189,11 +207,111 @@ internal static class CircleDimensioner
         return (dia, pos);
     }
 
+    /// <summary>桶内按空间位置聚类分组：先对全部孔对建最小生成树(MST)，取边长中位数
+    /// 的 2.5 倍作切断阈值——远处孔组/独立孔被切开(如 test3 上方 2 个 1.55 与下方 6 个
+    /// 分开)，同一位置的规则阵列/镜像组保留同组。组内孔数即 N×Ød 的 N。</summary>
+    private static List<List<Circle>> ClusterByPosition(List<Circle> group)
+    {
+        int n = group.Count;
+        if (n <= 1) return new List<List<Circle>> { group };
+        var edges = new List<(int A, int B, double D)>();
+        for (int i = 0; i < n; i++)
+            for (int j = i + 1; j < n; j++)
+            {
+                double dx = group[i].Center.X - group[j].Center.X;
+                double dy = group[i].Center.Y - group[j].Center.Y;
+                edges.Add((i, j, System.Math.Sqrt(dx * dx + dy * dy)));
+            }
+        edges.Sort((x, y) => x.D.CompareTo(y.D));
+
+        var parent = new int[n];
+        for (int i = 0; i < n; i++) parent[i] = i;
+        int Find(int x)
+        {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        }
+
+        var mst = new List<(int A, int B, double D)>();
+        foreach (var e in edges)
+        {
+            int ra = Find(e.A), rb = Find(e.B);
+            if (ra != rb) { parent[ra] = rb; mst.Add(e); }
+        }
+        var ds = mst.Select(e => e.D).OrderBy(v => v).ToList();
+        // 切断阈值：MST 边长排序后找最大相邻间隙比(如 16.5 -> 39.6 比值 2.4)，
+        // 比值 > 2.0 视为"组间远距"切断；均匀阵列内部没有这种跳变，不会误切。
+        double cut = double.MaxValue;
+        double bestRatio = 1.0;
+        for (int i = 0; i < ds.Count - 1; i++)
+        {
+            if (ds[i] < 1e-9) continue;
+            double r = ds[i + 1] / ds[i];
+            if (r > bestRatio) { bestRatio = r; cut = ds[i + 1] - 1e-9; }
+        }
+        if (bestRatio <= 2.0) cut = double.MaxValue;   // 无明显组间间隙 -> 整桶一组
+        for (int i = 0; i < n; i++) parent[i] = i;
+        foreach (var e in mst)
+            if (e.D <= cut)
+            {
+                int ra = Find(e.A), rb = Find(e.B);
+                if (ra != rb) parent[ra] = rb;
+            }
+        var map = new Dictionary<int, List<Circle>>();
+        for (int i = 0; i < n; i++)
+        {
+            int r = Find(i);
+            if (!map.TryGetValue(r, out var list)) map[r] = list = new List<Circle>();
+            list.Add(group[i]);
+        }
+        return map.Values.ToList();
+    }
+
+    /// <summary>两组孔是否关于竖直轴左右镜像(孔数相同、每点都能在另一组找到对称对应点)。
+    /// 用于把"左右对称的两组阵列/单孔"合并为一个 N×Ød 标注。</summary>
+    private static bool IsMirrorPair(List<Circle> a, List<Circle> b, double tol)
+    {
+        if (a.Count != b.Count) return false;
+        double minX = double.MaxValue, maxX = double.MinValue;
+        foreach (var c in a)
+        {
+            minX = System.Math.Min(minX, c.Center.X);
+            maxX = System.Math.Max(maxX, c.Center.X);
+        }
+        foreach (var c in b)
+        {
+            minX = System.Math.Min(minX, c.Center.X);
+            maxX = System.Math.Max(maxX, c.Center.X);
+        }
+        double sym = (minX + maxX) * 0.5;
+        var used = new bool[b.Count];
+        foreach (var ca in a)
+        {
+            double mx = 2 * sym - ca.Center.X;
+            bool found = false;
+            for (int k = 0; k < b.Count; k++)
+            {
+                if (used[k]) continue;
+                if (System.Math.Abs(b[k].Center.X - mx) < tol &&
+                    System.Math.Abs(b[k].Center.Y - ca.Center.Y) < tol)
+                {
+                    used[k] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
     /// <summary>国标"折线引出线"直径标注：实心箭头从圆周引出，先斜线段(约 45°)再折成
     /// 水平直线，文字 ⌀d 写在水平线段上方居中。用 Line+Solid+MText 组合——小孔的文字
-    /// 比圆大，"过圆心两端箭头+中间文字"放不下，折线引出线是 GB 标准注法。</summary>
+    /// 比圆大，"过圆心两端箭头+中间文字"放不下，折线引出线是 GB 标准注法。
+    /// 孔在中轴线右侧时向左引出，避免文字飞出图外。</summary>
     private static void AddDiameterLeader(Database db, Transaction tr, BlockTableRecord space,
-        Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double baseGap)
+        Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double baseGap,
+        double midX)
     {
         double asz = 2.5, txtH = 2.5;
         ObjectId textStyleId = ObjectId.Null;
@@ -206,13 +324,13 @@ internal static class CircleDimensioner
         }
         catch { }
         double leader = System.Math.Max(8.0, radius + baseGap * 1.2);
-        int dir = 1;   // 向右引出
+        int dir = center.X >= midX ? -1 : 1;   // 孔在图中轴线右侧 -> 向左引出，否则向右
         // 折线：圆周点(箭头) -> 斜线45° -> 水平线(文字区)
         double slope = System.Math.Max(4.0, radius + baseGap * 0.8);   // 斜线水平/垂直分量
         var pCirc = new Point3d(center.X + dir * radius, center.Y, 0);              // 箭头尖端(圆周)
         var pBend = new Point3d(pCirc.X + dir * slope, pCirc.Y + slope, 0);         // 折点(斜线转水平)
         double textW = System.Math.Max(10.0, 0.7 * txtH * txt.Length);              // 文字区宽度
-        var pEnd = new Point3d(pBend.X + textW, pBend.Y, 0);                        // 水平线末端
+        var pEnd = new Point3d(pBend.X + dir * textW, pBend.Y, 0);                  // 水平线末端
 
         // 实心箭头：尖端在圆周，沿斜线方向指向圆心
         double aLen = pBend.X - pCirc.X, aH = pBend.Y - pCirc.Y;
@@ -250,10 +368,10 @@ internal static class CircleDimensioner
         using var mt = new MText();
         mt.SetDatabaseDefaults(db);
         if (!textStyleId.IsNull)
-            mt.TextStyleId = textStyleId;
+        mt.TextStyleId = textStyleId;
         mt.Contents = txt.Replace("Ø", "%%c");
         mt.TextHeight = txtH;
-        mt.Location = new Point3d(pBend.X + textW * 0.5, pBend.Y + txtH * 0.6, 0);
+        mt.Location = new Point3d(pBend.X + dir * textW * 0.5, pBend.Y + txtH * 0.6, 0);
         mt.Attachment = AttachmentPoint.MiddleCenter;
         mt.LayerId = layerId;
         space.AppendEntity(mt);
