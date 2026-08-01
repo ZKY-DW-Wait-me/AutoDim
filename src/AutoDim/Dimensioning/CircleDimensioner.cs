@@ -305,14 +305,18 @@ internal static class CircleDimensioner
     }
 
     /// <summary>CAD 原生直径标注(DiametricDimension)：尺寸线过圆心、两端标准箭头在圆周，
-    /// 文字放得下时在尺寸线中间上方、放不下时自动外置到圆外(国标直径注法)。必须用
-    /// CAD 标注实体而非手绘 Line/Solid——箭头才是标准尺寸箭头。</summary>
+    /// 文字放得下时在尺寸线中间上方、放不下时自动外置到圆外(国标直径注法)。
+    /// 尺寸线取 45° 方向——圆心十字中心线是水平+垂直，直径线若水平会与中心线完全重叠，
+    /// 45° 与两条中心线都错开(用户明确要求错开角度)。</summary>
     private static void AddDiameterDim(Database db, Transaction tr, BlockTableRecord space,
         Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId)
     {
-        // 水平直径线两端点(圆周)，尺寸线过圆心
-        var p1 = new Point3d(center.X - radius, center.Y, 0);
-        var p2 = new Point3d(center.X + radius, center.Y, 0);
+        // 45° 直径线两端点(圆周)，尺寸线过圆心，与十字中心线错开
+        const double diag = System.Math.PI / 4.0;
+        double ox = System.Math.Cos(diag) * radius;
+        double oy = System.Math.Sin(diag) * radius;
+        var p1 = new Point3d(center.X - ox, center.Y - oy, 0);
+        var p2 = new Point3d(center.X + ox, center.Y + oy, 0);
         using var dim = new DiametricDimension(p1, p2, 0.0, "", dimStyleId);
         // 文字放不下(小孔)时允许外置到圆外——CAD 标准直径标注行为；放得下仍在中间上方
         dim.Dimtix = false;
