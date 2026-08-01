@@ -60,9 +60,11 @@ echo "== 4) assert =="
 fail=0
 # ASCII 前缀断言，规避中文控制台编码问题
 CLEAN="$(tr -d '\000' < "$LOG")"
-echo "$CLEAN" | grep -q "ADIMSAMPLE:" || { echo "FAIL: 插件未加载或示例未生成"; fail=1; }
-echo "$CLEAN" | grep -q "AUTODIM:"    || { echo "FAIL: 未执行整图标注"; fail=1; }
-echo "$CLEAN" | grep -q "ADIMCLEAN:"  || { echo "FAIL: 未执行图纸清洗"; fail=1; }
+# 用 grep -c 而非 grep -q：set -o pipefail 下 grep -q 提前退出会让 echo 收 SIGPIPE，
+# 管道被判失败(日志变大后必现)；-c 读完整个输入。
+[ "$(echo "$CLEAN" | grep -c 'ADIMSAMPLE:')" -gt 0 ] || { echo "FAIL: 插件未加载或示例未生成"; fail=1; }
+[ "$(echo "$CLEAN" | grep -c 'AUTODIM:')" -gt 0 ]    || { echo "FAIL: 未执行整图标注"; fail=1; }
+[ "$(echo "$CLEAN" | grep -c 'ADIMCLEAN:')" -gt 0 ]  || { echo "FAIL: 未执行图纸清洗"; fail=1; }
 # 断言至少生成了标注（具体数量随 Phase 2~5 的类别组合变化，不做硬编码）
 tot="$(echo "$CLEAN" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
 { [ -n "$tot" ] && [ "$tot" -gt 0 ]; } || { echo "FAIL: total 标注数量为 0"; fail=1; }

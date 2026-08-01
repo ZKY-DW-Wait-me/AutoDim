@@ -22,7 +22,8 @@ internal static class LayoutSolver
     private const double RotTol = 0.05;     // Rotated 旋转角去重容差(rad)
     private const int MaxRounds = 40;       // 外推最大轮数(每轮处理全部重叠对)
     private const double OffsetCapFactor = 4.0; // 外推量上限 = 该标注原始偏移的倍数
-                                                  // (2.5 对相向而行的分段文字不够推到位，提到 4.0)
+                                                  // (4.0 曾在小图上把定位链推飞 60mm；
+                                                  //  配合区域边界保护后不再越界)
     private const double NearDupTol = 1.5;  // 近重复测量段容差(mm)：吃掉脏几何/重复面产生的碎片重复标注
 
     /// <summary>整图去重（不移动任何标注；供全局收尾调用）。</summary>
@@ -39,7 +40,10 @@ internal static class LayoutSolver
         var ids = Collect(db, tr, region, 4.0 * baseGap);
         int removed = RemoveDuplicates(tr, ids);
         ids = Collect(db, tr, region, 4.0 * baseGap);
-        int moved = Spread(tr, ids, baseGap);
+        var regionBox = new Extents3d(
+            new Point3d(region.MinPoint.X - 4.0 * baseGap, region.MinPoint.Y - 4.0 * baseGap, 0),
+            new Point3d(region.MaxPoint.X + 4.0 * baseGap, region.MaxPoint.Y + 4.0 * baseGap, 0));
+        int moved = Spread(tr, ids, baseGap, regionBox);
         int near = SuppressNearDuplicates(tr, ids);
         return (removed + near, moved);
     }
@@ -137,7 +141,7 @@ internal static class LayoutSolver
 
     // ---------- 外推避让 ----------
 
-    private static int Spread(Transaction tr, List<ObjectId> ids, double baseGap)
+    private static int Spread(Transaction tr, List<ObjectId> ids, double baseGap, Extents3d? regionBox)
     {
         if (ids.Count < 2) return 0;
         int moved = 0;
@@ -163,14 +167,14 @@ internal static class LayoutSolver
                     }
                     // 推 offset 较大者（并列推先出现的）；到上限则换另一个
                     int moverIdx = mi.Value.Offset >= mj.Value.Offset ? i : j;
-                    if (TryPush(tr, ids[moverIdx], moverIdx == i ? mi.Value : mj.Value, baseGap))
+                    if (TryPush(tr, ids[moverIdx], moverIdx == i ? mi.Value : mj.Value, baseGap, regionBox))
                     {
                         pushedThisRound++;
                         moved++;
                         continue;
                     }
                     int otherIdx = moverIdx == i ? j : i;
-                    if (TryPush(tr, ids[otherIdx], otherIdx == i ? mi.Value : mj.Value, baseGap))
+                    if (TryPush(tr, ids[otherIdx], otherIdx == i ? mi.Value : mj.Value, baseGap, regionBox))
                     {
                         pushedThisRound++;
                         moved++;
@@ -213,6 +217,9 @@ internal static class LayoutSolver
         return dead.Count;
     }
 
+    /// <summary>读取各标注的【文字框】——外推判据用文字框而不是整体 AABB：
+    /// AABB 重叠(尺寸界线区域交叉)不等于文字相撞，按 AABB 外推会把 test2 这种小图上
+    /// "区域重叠但文字相距很远"的标注白白推出 60mm。</summary>
     private static List<Extents3d?> ReadExtents(Transaction tr, List<ObjectId> ids)
     {
         var exts = new List<Extents3d?>(ids.Count);
@@ -224,10 +231,30 @@ internal static class LayoutSolver
             {
                 try { e = d.GeometricExtents; }
                 catch { }
+                var tb = TextBoxOf(tr, d);
+                if (tb.HasValue) e = tb.Value;
             }
             exts.Add(e);
         }
         return exts;
+    }
+
+    /// <summary>标注块内文字实体(WCS)外接框；找不到返回 null。</summary>
+    private static Extents3d? TextBoxOf(Transaction tr, Dimension d)
+    {
+        try
+        {
+            if (tr.GetObject(d.DimBlockId, OpenMode.ForRead) is not BlockTableRecord blk) return null;
+            foreach (ObjectId bid in blk)
+            {
+                if (tr.GetObject(bid, OpenMode.ForRead) is DBText txt)
+                    return txt.GeometricExtents;
+                if (tr.GetObject(bid, OpenMode.ForRead) is MText mt)
+                    return mt.GeometricExtents;
+            }
+        }
+        catch { }
+        return null;
     }
 
     /// <summary>两个标注是否"同一测量段"（端点两两互换在容差内，仅直线类）。</summary>
@@ -306,7 +333,7 @@ internal static class LayoutSolver
     }
 
     /// <summary>把标注沿远离被测要素的方向外推一步；到上限或无法移动返回 false。</summary>
-    private static bool TryPush(Transaction tr, ObjectId id, MoveInfo m, double baseGap)
+    private static bool TryPush(Transaction tr, ObjectId id, MoveInfo m, double baseGap, Extents3d? regionBox)
     {
         if (m.Offset < 1e-6) return false;
         double cap = System.Math.Min(m.Offset0 * OffsetCapFactor, 6.0 * baseGap);
@@ -314,6 +341,14 @@ internal static class LayoutSolver
         double step = System.Math.Max(0.8, 0.5 * m.Offset);
         double target = System.Math.Min(cap, m.Offset + step);
         if (target - m.Offset < 0.2) return false;
+        if (regionBox.HasValue)
+        {
+            // 外推不能把尺寸线/引线推出图纸范围(小图上推飞 60mm 的回归保护)
+            var np = m.Base + m.Dir * target;
+            if (np.X < regionBox.Value.MinPoint.X || np.X > regionBox.Value.MaxPoint.X ||
+                np.Y < regionBox.Value.MinPoint.Y || np.Y > regionBox.Value.MaxPoint.Y)
+                return false;
+        }
         if (tr.GetObject(id, OpenMode.ForWrite) is not Dimension d) return false;
         try
         {

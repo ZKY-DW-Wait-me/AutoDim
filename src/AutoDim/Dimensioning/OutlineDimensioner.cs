@@ -66,6 +66,8 @@ internal static class OutlineDimensioner
                 arcCands.Add((i, pl.GetArcSegment2dAt(i).Radius));
             }
             arcCands.Sort((x, y) => y.R.CompareTo(x.R));
+            // 残弧过滤：聚类/吸附可能产生 r<0.5mm 的微弧（扫描噪声），R 标注无意义
+            arcCands = arcCands.Where(c => c.R >= 0.5).ToList();
             if (arcCands.Count > MaxArcDims)
                 arcCands = arcCands.GetRange(0, MaxArcDims);
             foreach (var (i, _) in arcCands)

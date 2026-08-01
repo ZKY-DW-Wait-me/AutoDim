@@ -33,12 +33,34 @@ public static class PlanarGraph
             AddNeighbor(adj, b, a);
         }
 
-        double Angle(int u, int v) =>
-            Math.Atan2(pts[v].Y - pts[u].Y, pts[v].X - pts[u].X);
+        // 圆弧边按"端点处切线方向"参与转向判断，不能当直线(弦方向)处理——
+        // 对 77° 大弧，弦方向与切线差 ~38°，最小右转会选错下一条边，
+        // 导致弧的 bulge 被贴到相邻直线上(端头 R6 被标成 R5.69/R6.42 的另一半根因)。
+        double TangentOut(int u, int v)
+        {
+            double phi = Math.Atan2(pts[v].Y - pts[u].Y, pts[v].X - pts[u].X);
+            double b = EdgeBulge(u, v, edgeMap);
+            if (Math.Abs(b) > 1e-9)
+                phi += 2.0 * Math.Atan(b);   // 起点切线比弦偏 2·atan(b)
+            return phi;
+        }
+
+        double TangentIn(int u, int v)
+        {
+            // 在 u 点，边 v→u 的来向(从 u 指向 v 的切线方向)：
+            // 直线 = atan2(v-u)；弧再加 2·atan(b_uv)(b_uv=EdgeBulge(u,v)，方向反转已取负)
+            // 半圆验证：u=(2,0) v=(0,0) 存储边(0,0)->(2,0) b=+1，EdgeBulge(u,v)=-1，
+            // 来向 = π + 2·atan(-1) = π/2 = +90° ✅(从 (2,0) 沿弧回 (0,0) 向上)
+            double phi = Math.Atan2(pts[v].Y - pts[u].Y, pts[v].X - pts[u].X);
+            double b = EdgeBulge(u, v, edgeMap);
+            if (Math.Abs(b) > 1e-9)
+                phi += 2.0 * Math.Atan(b);
+            return phi;
+        }
 
         var outAngles = adj.ToDictionary(
             kv => kv.Key,
-            kv => kv.Value.Select(v => (Ang: Angle(kv.Key, v), V: v))
+            kv => kv.Value.Select(v => (Ang: TangentOut(kv.Key, v), V: v))
                           .OrderBy(x => x.Ang).ToList());
 
         var visited = new HashSet<(int, int)>();
@@ -54,7 +76,7 @@ public static class PlanarGraph
                 {
                     visited.Add(cur);
                     path.Add(cur);
-                    double rev = Angle(cur.Item2, cur.Item1);
+                    double rev = TangentIn(cur.Item2, cur.Item1);
                     var al = outAngles[cur.Item2];
                     int idx = FirstGe(al, rev);
                     int nxt = al[(idx - 1 + al.Count) % al.Count].V;
@@ -64,8 +86,15 @@ public static class PlanarGraph
                 if (path.Count >= 3 && cur == start)
                 {
                     var verts = path.Select(p => p.Item2).ToList();
-                    var bulges = path.Select(p =>
-                        edgeMap.TryGetValue(p, out var bl) ? bl : -edgeMap[(p.Item2, p.Item1)]).ToList();
+                    // bulge[k] 必须对应"边 verts[k]->verts[k+1]"：path[k] 是边 verts[k-1]->verts[k]，
+                    // 所以取 path[k+1] 的 bulge（闭合循环）。之前直接取 path[k] 造成错位一位，
+                    // 圆弧 bulge 被贴到相邻边上(端头 R6 被标成 R5.69/R6.42 的根因)。
+                    var bulges = new List<double>(path.Count);
+                    for (int k = 0; k < path.Count; k++)
+                    {
+                        var p = path[(k + 1) % path.Count];
+                        bulges.Add(edgeMap.TryGetValue(p, out var bl) ? bl : -edgeMap[(p.Item2, p.Item1)]);
+                    }
                     faces.Add((verts, bulges));
                 }
             }
@@ -91,5 +120,13 @@ public static class PlanarGraph
             else hi = mid;
         }
         return lo;
+    }
+
+    /// <summary>边 (u,v) 的 bulge；存储方向相反时取负。</summary>
+    private static double EdgeBulge(int u, int v, Dictionary<(int, int), double> edgeMap)
+    {
+        if (edgeMap.TryGetValue((u, v), out var b)) return b;
+        if (edgeMap.TryGetValue((v, u), out var b2)) return -b2;
+        return 0;
     }
 }

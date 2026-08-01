@@ -116,7 +116,10 @@ internal static class CircleDimensioner
         // 基准端(左下角)与末端(右下角)用零件角点。延伸线穿零件实体是内部孔定位的 GB 常态。
         var holeXs = circles.Select(c => c.Center.X).Distinct().OrderBy(v => v).ToList();
         double bottomY = e.MinPoint.Y, topY = e.MaxPoint.Y, rightX = e.MaxPoint.X;
-        bool xChainOk = holeXs.Count + 1 <= MaxChainPts && MinGapOk(holeXs);
+        // 多孔单排时只出沿排列方向的链(X 全同=Y 排时 X 链冗余；反之亦然)；
+        // 单孔零件仍保留双轴定位链
+        bool xChainOk = holeXs.Count + 1 <= MaxChainPts && MinGapOk(holeXs) &&
+                        (holeXs.Count > 1 || circles.Count == 1);
         if (xChainOk)
         {
             // 每个 X 对应的圆心 Y(同一 X 若有多孔，取第一个；延伸线都从该圆心引)
@@ -145,7 +148,8 @@ internal static class CircleDimensioner
         // —— Y 定位链：minY→cy1→cy2→...→maxY。延伸线从圆心水平引到零件左侧的尺寸线。
         var holeYs = circles.Select(c => c.Center.Y).Distinct().OrderBy(v => v).ToList();
         double leftX = e.MinPoint.X;
-        bool yChainOk = holeYs.Count + 1 <= MaxChainPts && MinGapOk(holeYs);
+        bool yChainOk = holeYs.Count + 1 <= MaxChainPts && MinGapOk(holeYs) &&
+                        (holeYs.Count > 1 || circles.Count == 1);
         if (yChainOk)
         {
             var yToX = new Dictionary<double, double>();
