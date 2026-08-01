@@ -55,7 +55,10 @@ public static class Cleaning
             if (ux < 0 || (Math.Abs(ux) < 1e-12 && uy < 0)) { ux = -ux; uy = -uy; }
             double nx = -uy, ny = ux;
             double off = ((s.A.X + s.B.X) / 2) * nx + ((s.A.Y + s.B.Y) / 2) * ny;
-            int offBucket = (int)Math.Round(off / mergeTol);
+            // 分组桶取 mergeTol 的一半：相距 ≤mergeTol/2 的平行线才视为同一条线。
+            // 原实现用整档 mergeTol，会把相距 0.5mm 的重复轮廓(扫描图常见)误并成
+            // "平均线"，端点 Snap 错位后整个面丢失(dup05 实测 faces=0)。
+            int offBucket = (int)Math.Round(off / (mergeTol * 0.5));
 
             var key = (angBucket, offBucket);
             if (!groups.TryGetValue(key, out var list))
