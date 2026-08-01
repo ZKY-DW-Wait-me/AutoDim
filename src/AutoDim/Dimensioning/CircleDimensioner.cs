@@ -30,10 +30,10 @@ internal static class CircleDimensioner
         int dia = 0, pos = 0;
 
         // —— 直径标注：重复直径合并为数量注记（GB 惯例 "N×Ød"）——
-        // 同一直径(0.1mm 精度分桶)：桶内只有 1 个孔 -> 正常引线标 Ø；桶内 ≥2 个 ->
-        // 只出 MText 注记 "N×Ød"（test.dwg 实测 442 个直径标注只有 6 种直径，
-        // 128×Ø2.75 这类重复标注是 Radial+Rotated 重叠的最大来源；且多桶代表孔的
-        // 引线方向平行、文字互相叠压，故多桶不再出代表孔引线）。
+        // 完整圆按 GB/T 4458.4 用 DiametricDimension：尺寸线过圆心、两端箭头，
+        // 文字 ⌀d 水平写在尺寸线中段(不能用 RadialDimension——那是半径/圆角的标法)。
+        // 同一直径(0.1mm 精度分桶)：桶内只有 1 个孔 -> 标 Ø；桶内 ≥2 个 ->
+        // 代表孔标 Ø + MText 注记 "N×Ød"。
         double cx = 0, cy = 0;
         foreach (var c in circles) { cx += c.Center.X; cy += c.Center.Y; }
         cx /= circles.Count;
@@ -80,23 +80,25 @@ internal static class CircleDimensioner
                 var c0 = list[0];
                 double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
                 var dir = new Vector3d(System.Math.Cos(ang), System.Math.Sin(ang), 0);
-                Point3d chordPt = c0.Center + dir * c0.Radius;   // 圆周上的点（箭头位置）
+                Point3d chordPt = c0.Center + dir * c0.Radius;        // 尺寸线起点(圆周)
+                Point3d farPt = c0.Center - dir * c0.Radius;          // 对侧圆周(过圆心)
                 string txt = "%%c" + FormatLen(c0.Radius * 2.0); // %%c = ⌀
                 DimUtil.Append(db, tr, space,
-                    new RadialDimension(c0.Center, chordPt, c0.Radius * 0.8, txt, dimStyleId), dimStyleId, layerId);
+                    new DiametricDimension(chordPt, farPt, 0.0, txt, dimStyleId), dimStyleId, layerId);
                 dia++;
             }
             else
             {
-                // 多孔桶：代表孔仍标一个 Ø 引线(指明直径指向哪里)，其余孔用 N×Ød 注记
+                // 多孔桶：代表孔标一个 Ø(过圆心直径标注)，其余孔用 N×Ød 注记
                 // 表达数量——否则只有注记、孔看起来"漏标"
                 var c0 = list[0];
                 double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
                 var dir = new Vector3d(System.Math.Cos(ang), System.Math.Sin(ang), 0);
                 Point3d chordPt = c0.Center + dir * c0.Radius;
+                Point3d farPt = c0.Center - dir * c0.Radius;
                 string txt = "%%c" + FormatLen(c0.Radius * 2.0);
                 DimUtil.Append(db, tr, space,
-                    new RadialDimension(c0.Center, chordPt, c0.Radius * 0.8, txt, dimStyleId), dimStyleId, layerId);
+                    new DiametricDimension(chordPt, farPt, 0.0, txt, dimStyleId), dimStyleId, layerId);
                 dia++;
                 if (ext == null) continue;
                 double bx = 0, by = 0;

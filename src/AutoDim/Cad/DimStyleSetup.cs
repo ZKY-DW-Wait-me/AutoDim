@@ -21,6 +21,7 @@ internal static class DimStyleSetup
     public static ObjectId EnsureStyle(Database db, Transaction tr, Extents3d? ext)
     {
         double scale = ResolveScale(db, tr, ext);
+        ObjectId textStyleId = EnsureTextStyle(db, tr);
 
         var dst = (DimStyleTable)tr.GetObject(db.DimStyleTableId, OpenMode.ForRead);
         ObjectId id;
@@ -28,16 +29,36 @@ internal static class DimStyleSetup
         {
             id = dst[StyleName];
             var rec = (DimStyleTableRecord)tr.GetObject(id, OpenMode.ForWrite);
-            ApplyValues(rec, scale);
+            ApplyValues(db, tr, rec, scale);
         }
         else
         {
             dst.UpgradeOpen();
             var rec = new DimStyleTableRecord { Name = StyleName };
-            ApplyValues(rec, scale);
+            ApplyValues(db, tr, rec, scale);
             id = dst.Add(rec);
             tr.AddNewlyCreatedDBObject(rec, true);
         }
+        return id;
+    }
+
+    /// <summary>创建/复用 ADIM 专用文字样式：国标字体 gbeitc.shx(西文)+gbcbig.shx(中文)，
+    /// 避免默认 Standard/txt.shx 显示 ⌀/汉字走样。</summary>
+    private static ObjectId EnsureTextStyle(Database db, Transaction tr)
+    {
+        const string styleName = "AutoDimText";
+        var tst = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+        if (tst.Has(styleName))
+            return tst[styleName];
+        tst.UpgradeOpen();
+        var rec = new TextStyleTableRecord
+        {
+            Name = styleName,
+            FileName = "gbeitc.shx",
+            BigFontFileName = "gbcbig.shx",
+        };
+        ObjectId id = tst.Add(rec);
+        tr.AddNewlyCreatedDBObject(rec, true);
         return id;
     }
 
@@ -134,8 +155,11 @@ internal static class DimStyleSetup
         return null;
     }
 
-    private static void ApplyValues(DimStyleTableRecord rec, double scale)
+    private static void ApplyValues(Database db, Transaction tr, DimStyleTableRecord rec, double scale)
     {
+        var tst = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+        if (tst.Has("AutoDimText"))
+            rec.Dimtxsty = tst["AutoDimText"];
         rec.Dimtxt = 2.5;        // 文字高度(基础)
         rec.Dimasz = 2.5;        // 箭头大小(基础)
         rec.Dimscale = scale;    // 总体比例(自适应或用户固定)
