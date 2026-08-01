@@ -150,6 +150,61 @@ internal static class OutlineDimensioner
             : new Point2d(0, 0);
         foreach (var (la, lb, _) in lineCands)
             seg += AnnotateSegment(db, tr, space, la, lb, gCentroid, dimStyleId, layerId, baseGap);
+
+        // 独立 Arc 实体（圆角/腰形槽端头：SW 导出常为独立 ARC 而非 Polyline bulge）：
+        // 与 Polyline 弧段共用端点去重，半径过滤 >=0.5，最多 MaxArcDims 条，
+        // 同半径 ≥3 合并为 "N×R"（国标圆角阵列注法）。
+        var arcEnts = new List<(Point2d A, Point2d B, Point2d C, double R)>();
+        foreach (var id in ids)
+        {
+            if (tr.GetObject(id, OpenMode.ForRead) is not Arc ar) continue;
+            double r = ar.Radius;
+            if (r < 0.5) continue;
+            double a0 = ar.StartAngle, a1 = ar.EndAngle;
+            if (a1 <= a0) a1 += 2.0 * System.Math.PI;
+            var c = new Point2d(ar.Center.X, ar.Center.Y);
+            var pa = new Point2d(c.X + r * System.Math.Cos(a0), c.Y + r * System.Math.Sin(a0));
+            var pb = new Point2d(c.X + r * System.Math.Cos(a1), c.Y + r * System.Math.Sin(a1));
+            // 端点吸附到 0.05 网格后去重（与 Polyline 弧端点可能差几个微米）
+            var ka = new Point2d(System.Math.Round(pa.X * 20) / 20, System.Math.Round(pa.Y * 20) / 20);
+            var kb = new Point2d(System.Math.Round(pb.X * 20) / 20, System.Math.Round(pb.Y * 20) / 20);
+            var key = ka.X < kb.X || (ka.X == kb.X && ka.Y <= kb.Y) ? (ka, kb) : (kb, ka);
+            if (!seenArc.Add(key)) continue;   // 与 Polyline 弧段共享边只标一次
+            arcEnts.Add((pa, pb, c, r));
+        }
+        if (arcEnts.Count > 0)
+        {
+            arcEnts.Sort((x, y) => y.R.CompareTo(x.R));
+            if (arcEnts.Count > MaxArcDims)
+                arcEnts = arcEnts.GetRange(0, MaxArcDims);
+            var byRadius = new Dictionary<int, List<(Point2d A, Point2d B, Point2d C, double R)>>();
+            foreach (var ac in arcEnts)
+            {
+                int rk = (int)System.Math.Round(ac.R * 10);
+                if (!byRadius.TryGetValue(rk, out var l))
+                    byRadius[rk] = l = new List<(Point2d, Point2d, Point2d, double)>();
+                l.Add(ac);
+            }
+            foreach (var grp in byRadius.Values)
+            {
+                if (grp.Count >= 3)
+                {
+                    var rep = grp[0];
+                    AnnotateStandaloneArc(db, tr, space, rep.A, rep.B, rep.C, rep.R,
+                                          dimStyleId, layerId, baseGap, ext, $"{grp.Count}×");
+                    arc++;
+                }
+                else
+                {
+                    foreach (var ac in grp)
+                    {
+                        AnnotateStandaloneArc(db, tr, space, ac.A, ac.B, ac.C, ac.R,
+                                              dimStyleId, layerId, baseGap, ext);
+                        arc++;
+                    }
+                }
+            }
+        }
         return (seg, arc);
     }
 
@@ -278,15 +333,15 @@ internal static class OutlineDimensioner
         Point2d c2 = arcSeg.Center;
         double r = arcSeg.Radius;
 
-        // 弧中点方向 = 两端点(相对圆心)方向的和向量 toA+toB。
-        // 几何事实：对 <180° 的凸弧(圆角必然如此)，toA+toB 指向"两端点之间"即弧中点方向(有弧的那侧)。
-        // 不要用质心翻向 —— 那会把引线翻到没有弧的虚空(180°-270° 弧时质心若在同侧就会错)。
         Point2d a = pl.GetPoint2dAt(i), b = pl.GetPoint2dAt(j);
-        Vector2d toA = a - c2; toA = toA / toA.Length;
-        Vector2d toB = b - c2; toB = toB / toB.Length;
-        Vector2d bis = toA + toB; bis = bis / bis.Length;
-
-        Point2d arcMid = c2 + bis * r;     // 弧中点(圆周上，有弧的那侧)
+        // 弧中点用角度中点（逆时针跨弧扫掠的中线），对半圆弧(180°，U槽端头)也正确——
+        // 旧法用 toA+toB 对径点会归一出 0 除零。
+        double an0 = System.Math.Atan2(a.Y - c2.Y, a.X - c2.X);
+        double an1 = System.Math.Atan2(b.Y - c2.Y, b.X - c2.X);
+        double sweep = an1 - an0;
+        if (sweep <= 0) sweep += 2.0 * System.Math.PI;
+        double amid = an0 + sweep * 0.5;
+        Point2d arcMid = c2 + new Vector2d(System.Math.Cos(amid), System.Math.Sin(amid)) * r;
         var center = new Point3d(c2.X, c2.Y, 0);
         var chord = new Point3d(arcMid.X, arcMid.Y, 0);
 
@@ -300,6 +355,28 @@ internal static class OutlineDimensioner
 
         // 给圆弧补圆心十字线(GB/T 4458.1：圆角/圆弧应有圆心点画线)。
         // 过hang 仍取 radius+3mm，跟 CircleDimensioner 里孔的中心线保持一致。
+        if (ext.HasValue)
+            CenterlineHelper.AddCross(db, tr, space, center, r, ext.Value);
+    }
+
+    /// <summary>独立 Arc 实体的圆角标注：与 Polyline 弧段同法（圆心→弧中点→外延引线→R文字）。</summary>
+    private static void AnnotateStandaloneArc(Database db, Transaction tr, BlockTableRecord space,
+        Point2d a, Point2d b, Point2d c2, double r, ObjectId dimStyleId, ObjectId layerId,
+        double baseGap, Extents3d? ext = null, string? countPrefix = null)
+    {
+        double an0 = System.Math.Atan2(a.Y - c2.Y, a.X - c2.X);
+        double an1 = System.Math.Atan2(b.Y - c2.Y, b.X - c2.X);
+        double sweep = an1 - an0;
+        if (sweep <= 0) sweep += 2.0 * System.Math.PI;
+        double amid = an0 + sweep * 0.5;
+        Point2d arcMid = c2 + new Vector2d(System.Math.Cos(amid), System.Math.Sin(amid)) * r;
+
+        var center = new Point3d(c2.X, c2.Y, 0);
+        var chord = new Point3d(arcMid.X, arcMid.Y, 0);
+        double leader = System.Math.Max(baseGap * 0.6, r * 0.4);
+        string txt = (countPrefix ?? "") + "R" + FormatLen(System.Math.Round(r, 1));
+        var dim = new RadialDimension(center, chord, leader, txt, dimStyleId);
+        DimUtil.Append(db, tr, space, dim, dimStyleId, layerId);
         if (ext.HasValue)
             CenterlineHelper.AddCross(db, tr, space, center, r, ext.Value);
     }
