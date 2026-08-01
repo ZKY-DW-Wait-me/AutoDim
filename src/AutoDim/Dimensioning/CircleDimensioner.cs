@@ -30,8 +30,9 @@ internal static class CircleDimensioner
         int dia = 0, pos = 0;
 
         // —— 直径标注：重复直径合并为数量注记（GB 惯例 "N×Ød"）——
-        // 完整圆按 GB/T 4458.4 用 DiametricDimension：尺寸线过圆心、两端箭头，
-        // 文字 ⌀d 水平写在尺寸线中段(不能用 RadialDimension——那是半径/圆角的标法)。
+        // 完整圆按 GB/T 4458.4 标直径 ⌀d，用"水平引出线注法"：从圆周引一条水平
+        // 引出线（箭头指向圆周），文字 ⌀d 写在引出线末端上方、水平横放。
+        // 小孔(文字比圆大)无法用"过圆心两端箭头+中间文字"的注法，引出线法是通用标准。
         // 同一直径(0.1mm 精度分桶)：桶内只有 1 个孔 -> 标 Ø；桶内 ≥2 个 ->
         // 代表孔标 Ø + MText 注记 "N×Ød"。
         double cx = 0, cy = 0;
@@ -79,12 +80,8 @@ internal static class CircleDimensioner
             {
                 var c0 = list[0];
                 double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
-                var dir = new Vector3d(System.Math.Cos(ang), System.Math.Sin(ang), 0);
-                Point3d chordPt = c0.Center + dir * c0.Radius;        // 尺寸线起点(圆周)
-                Point3d farPt = c0.Center - dir * c0.Radius;          // 对侧圆周(过圆心)
                 string txt = "%%c" + FormatLen(c0.Radius * 2.0); // %%c = ⌀
-                DimUtil.Append(db, tr, space,
-                    new DiametricDimension(chordPt, farPt, 0.0, txt, dimStyleId), dimStyleId, layerId);
+                AddDiameterLeader(db, tr, space, c0.Center, c0.Radius, txt, dimStyleId, layerId, baseGap);
                 dia++;
             }
             else
@@ -93,12 +90,8 @@ internal static class CircleDimensioner
                 // 表达数量——否则只有注记、孔看起来"漏标"
                 var c0 = list[0];
                 double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
-                var dir = new Vector3d(System.Math.Cos(ang), System.Math.Sin(ang), 0);
-                Point3d chordPt = c0.Center + dir * c0.Radius;
-                Point3d farPt = c0.Center - dir * c0.Radius;
                 string txt = "%%c" + FormatLen(c0.Radius * 2.0);
-                DimUtil.Append(db, tr, space,
-                    new DiametricDimension(chordPt, farPt, 0.0, txt, dimStyleId), dimStyleId, layerId);
+                AddDiameterLeader(db, tr, space, c0.Center, c0.Radius, txt, dimStyleId, layerId, baseGap);
                 dia++;
                 if (ext == null) continue;
                 double bx = 0, by = 0;
@@ -241,6 +234,57 @@ internal static class CircleDimensioner
             return dst.Dimtxt * dst.Dimscale;
         }
         catch { return 2.5; }
+    }
+
+    /// <summary>国标"水平引出线"直径标注：从圆周引一条水平线(实心箭头指向圆周)，
+    /// 文字 ⌀d 水平写在引出线末端上方。用 Line+Solid+MText 组合——小孔的文字比圆大，
+    /// "过圆心两端箭头+中间文字"放不下，引出线法是通用标准注法。</summary>
+    private static void AddDiameterLeader(Database db, Transaction tr, BlockTableRecord space,
+        Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double baseGap)
+    {
+        double asz = 2.5, txtH = 2.5;
+        try
+        {
+            var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
+            asz = dst.Dimasz * dst.Dimscale;
+            txtH = dst.Dimtxt * dst.Dimscale;
+        }
+        catch { }
+        double leader = System.Math.Max(8.0, radius + baseGap * 1.2);
+        int dir = 1;   // 向右引出
+        var pCirc = new Point3d(center.X + dir * radius, center.Y, 0);
+        var pEnd = new Point3d(center.X + dir * (radius + leader), center.Y, 0);
+
+        // 实心箭头：尖端在圆周
+        using var solid = new Solid();
+        solid.SetDatabaseDefaults(db);
+        solid.SetPointAt(0, new Point3d(pCirc.X - dir * asz, pCirc.Y + asz * 0.5, 0));
+        solid.SetPointAt(1, new Point3d(pCirc.X - dir * asz, pCirc.Y - asz * 0.5, 0));
+        solid.SetPointAt(2, new Point3d(pCirc.X, pCirc.Y, 0));
+        solid.SetPointAt(3, new Point3d(pCirc.X, pCirc.Y, 0));
+        solid.LayerId = layerId;
+        space.AppendEntity(solid);
+        tr.AddNewlyCreatedDBObject(solid, true);
+        Cad.AdimMarker.Mark(db, tr, solid);
+
+        using var ln = new Line(pCirc, pEnd);
+        ln.SetDatabaseDefaults(db);
+        ln.LayerId = layerId;
+        space.AppendEntity(ln);
+        tr.AddNewlyCreatedDBObject(ln, true);
+        Cad.AdimMarker.Mark(db, tr, ln);
+
+        // 文字：引出线末端上方、水平(Arial 内联保证 ⌀/汉字显示)
+        using var mt = new MText();
+        mt.SetDatabaseDefaults(db);
+        mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{txt.Replace("%%c", "Ø")}}}";
+        mt.TextHeight = txtH;
+        mt.Location = new Point3d(pEnd.X, pEnd.Y + txtH * 0.6, 0);
+        mt.Attachment = AttachmentPoint.MiddleCenter;
+        mt.LayerId = layerId;
+        space.AppendEntity(mt);
+        tr.AddNewlyCreatedDBObject(mt, true);
+        Cad.AdimMarker.Mark(db, tr, mt);
     }
 
     /// <summary>MText 数量注记 "N×Ød"，文字高度跟随 ADIM 样式，中上位置居中。</summary>

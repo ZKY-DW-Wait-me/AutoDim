@@ -164,10 +164,11 @@ internal static class DimStyleSetup
         rec.Dimasz = 2.5;        // 箭头大小(基础)
         rec.Dimscale = scale;    // 总体比例(自适应或用户固定)
         rec.Dimtad = 1;          // 文字在尺寸线上方(不打断尺寸线)
-        rec.Dimtix = false;      // 不强制文字在界线内(放不下时外置)
+        rec.Dimtix = true;       // 强制文字在界线内：直径标注的尺寸线才会完整穿过圆心、
+                                 // 两端箭头(否则小孔文字外置、尺寸线缩成圆外一段，非国标画法)
         rec.Dimjust = 0;         // 文字沿尺寸线居中
         rec.Dimtmove = 0;        // 文字随尺寸线移动
-        rec.Dimtih = false;      // 界线内文字与尺寸线平行
+        rec.Dimtih = true;       // 界线内文字水平(直径 ⌀d 横放，GB)
         rec.Dimtoh = false;      // 界线外文字与尺寸线平行
     }
 }
