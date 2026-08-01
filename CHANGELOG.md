@@ -35,6 +35,7 @@
 - 删除插件自建 ADIM 标注样式与国标字体兜底：标注**只使用当前图纸的标注样式 + 当前图层**，CAD 样板里调什么插件就用什么，不再建自用样式、不改用户全局变量
 - 清理/统计逻辑改为按 AUTODIM XData 标记识别自产标注（不再依赖 ADIM 图层）：标注画在用户当前图层也能正确清场、去重、统计，用户手标永远不会被误删
 - 命令精简：删除 ADIMWIN/ADIMSEL/ADIMSAMPLE/ADIMSCALE/ADIMCLN/ADIMDEBUG/ADIMDUMP；保留 AUTODIM / ADIMALL / ADIMCOORD / ADIMCLEAN / ADIMCFG / ADIMVER
+- 标注完整跟随模板样式：若当前标注样式为注释性（annotative），插件标注同样设为注释性，布局/视口里的文字箭头比例与手动标注完全一致；圆标注不再强制覆盖 DIMTIX（文字是否外置完全由模板样式决定），所有标注（含角度标注）统一走同一套样式继承逻辑
 
 ### 阵列/对称查找重做（test3 16 孔板）
 

@@ -318,8 +318,8 @@ internal static class CircleDimensioner
         var p1 = new Point3d(center.X - ox, center.Y - oy, 0);
         var p2 = new Point3d(center.X + ox, center.Y + oy, 0);
         using var dim = new DiametricDimension(p1, p2, 0.0, "", dimStyleId);
-        // 文字放不下(小孔)时允许外置到圆外——CAD 标准直径标注行为；放得下仍在中间上方
-        dim.Dimtix = false;
+        // 不覆盖 Dimtix：文字是否允许外置完全由用户模板样式决定，
+        // 保证插件标注与手动标注(功能栏 DIMDIAMETER)行为一致。
         DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, txt);
     }
 

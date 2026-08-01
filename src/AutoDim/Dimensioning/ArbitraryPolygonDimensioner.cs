@@ -156,6 +156,7 @@ internal static class ArbitraryPolygonDimensioner
         dim.SetDatabaseDefaults(db);
         dim.DimensionStyle = dimStyleId;
         dim.LayerId = layerId;
+        DimUtil.InheritAnnotative(tr, dim, dimStyleId);
         space.AppendEntity(dim);
         tr.AddNewlyCreatedDBObject(dim, true);
         dim.TextRotation = 0.0;

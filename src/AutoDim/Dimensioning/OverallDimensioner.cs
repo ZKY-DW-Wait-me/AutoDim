@@ -7,6 +7,19 @@ namespace AutoDim.Dimensioning;
 /// <summary>把标注实体加入模型空间的公共工具。</summary>
 internal static class DimUtil
 {
+    /// <summary>跟随标注样式的注释性(annotative)：模板样式若是注释性的，标注也必须注释性，
+    /// 否则文字/箭头大小按固定比例显示，与手动标注不一致(尤其布局/视口)。</summary>
+    public static void InheritAnnotative(Transaction tr, Dimension dim, ObjectId dimStyleId)
+    {
+        try
+        {
+            var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
+            if (dst.Annotative == AnnotativeStates.True)
+                dim.Annotative = AnnotativeStates.True;
+        }
+        catch { }
+    }
+
     public static void Append(Database db, Transaction tr, BlockTableRecord space,
                               Dimension dim, ObjectId dimStyleId, ObjectId layerId,
                               string? overrideText = null)
@@ -16,6 +29,7 @@ internal static class DimUtil
         dim.SetDatabaseDefaults(db);
         dim.DimensionStyle = dimStyleId;
         dim.LayerId = layerId;
+        InheritAnnotative(tr, dim, dimStyleId);
         space.AppendEntity(dim);
         tr.AddNewlyCreatedDBObject(dim, true);
         if (!string.IsNullOrEmpty(overrideText))
