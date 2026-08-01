@@ -49,33 +49,109 @@ internal static class DimUtil
 internal static class OverallDimensioner
 {
     /// <summary>轮廓边界点：包围盒各边上"真实存在的轮廓顶点"——总体尺寸的界线必须
-    /// 接触图形。圆弧端头零件的角点(minX,bottomY)往往不存在，直接引线会悬空。</summary>
+    /// 接触图形。
+    /// 取点规则（GB 总体尺寸）：长/宽 = 两条平行边之间的距离，界线优先取
+    /// "贴边的直线段中点"（圆角矩形标原始长宽，而不是两段四分之一圆弧末端捕捉点）；
+    /// 该侧没有直线段（纯圆弧端头）时才取圆弧极值点，保证界线永不悬空。</summary>
     public static (Point3d? Left, Point3d? Right, Point3d? Bottom, Point3d? Top) OutlineEdgePoints(
         Transaction tr, IReadOnlyList<ObjectId> ids, Extents3d ext)
     {
         double minX = ext.MinPoint.X, maxX = ext.MaxPoint.X;
         double minY = ext.MinPoint.Y, maxY = ext.MaxPoint.Y;
+        const double tol = 1e-6;
         Point3d? left = null, right = null, bottom = null, top = null;
-        double dl = double.MaxValue, dr = double.MaxValue, db = double.MaxValue, dt = double.MaxValue;
+
         foreach (var id in ids)
         {
-            if (tr.GetObject(id, OpenMode.ForRead) is not Polyline pl) continue;
-            int n = pl.NumberOfVertices;
-            for (int i = 0; i < n; i++)
+            if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
+            switch (ent)
             {
-                var p = pl.GetPoint2dAt(i);
-                var p3 = new Point3d(p.X, p.Y, 0);
-                double ld = System.Math.Abs(p.X - minX);
-                if (ld < dl) { dl = ld; left = p3; }
-                double rd = System.Math.Abs(p.X - maxX);
-                if (rd < dr) { dr = rd; right = p3; }
-                double bd = System.Math.Abs(p.Y - minY);
-                if (bd < db) { db = bd; bottom = p3; }
-                double td = System.Math.Abs(p.Y - maxY);
-                if (td < dt) { dt = td; top = p3; }
+                case Polyline pl:
+                {
+                    int n = pl.NumberOfVertices;
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (!pl.Closed && i == n - 1) break;
+                        int j = (i + 1) % n;
+                        var a = pl.GetPoint2dAt(i);
+                        var b = pl.GetPoint2dAt(j);
+                        if (System.Math.Abs(pl.GetBulgeAt(i)) < 1e-9)
+                            ConsiderEdgeLine(a, b, minX, maxX, minY, maxY, tol,
+                                             ref left, ref right, ref bottom, ref top);
+                        else
+                        {
+                            var arcSeg = pl.GetArcSegment2dAt(i);
+                            ConsiderEdgeArc(arcSeg.Center, arcSeg.Radius, arcSeg.StartAngle, arcSeg.EndAngle,
+                                            minX, maxX, minY, maxY, tol,
+                                            ref left, ref right, ref bottom, ref top);
+                        }
+                    }
+                    break;
+                }
+                case Line ln:
+                    ConsiderEdgeLine(new Point2d(ln.StartPoint.X, ln.StartPoint.Y),
+                                     new Point2d(ln.EndPoint.X, ln.EndPoint.Y),
+                                     minX, maxX, minY, maxY, tol,
+                                     ref left, ref right, ref bottom, ref top);
+                    break;
+                case Arc ar:
+                {
+                    double a0 = ar.StartAngle, a1 = ar.EndAngle;
+                    if (a1 <= a0) a1 += 2.0 * System.Math.PI;
+                    ConsiderEdgeArc(new Point2d(ar.Center.X, ar.Center.Y), ar.Radius, a0, a1,
+                                    minX, maxX, minY, maxY, tol,
+                                    ref left, ref right, ref bottom, ref top);
+                    break;
+                }
             }
         }
         return (left, right, bottom, top);
+    }
+
+    /// <summary>直线段贴包围盒某条边时，取该直线段中点作为总体尺寸界线落点
+    /// （两条平行线之间距离的基准，避免落到圆弧末端捕捉点）。</summary>
+    private static void ConsiderEdgeLine(Point2d a, Point2d b,
+        double minX, double maxX, double minY, double maxY, double tol,
+        ref Point3d? left, ref Point3d? right, ref Point3d? bottom, ref Point3d? top)
+    {
+        if (System.Math.Abs(a.Y - b.Y) < tol)
+        {
+            if (System.Math.Abs(a.Y - minY) < tol)
+                bottom = new Point3d((a.X + b.X) * 0.5, minY, 0);
+            if (System.Math.Abs(a.Y - maxY) < tol)
+                top = new Point3d((a.X + b.X) * 0.5, maxY, 0);
+        }
+        else if (System.Math.Abs(a.X - b.X) < tol)
+        {
+            if (System.Math.Abs(a.X - minX) < tol)
+                left = new Point3d(minX, (a.Y + b.Y) * 0.5, 0);
+            if (System.Math.Abs(a.X - maxX) < tol)
+                right = new Point3d(maxX, (a.Y + b.Y) * 0.5, 0);
+        }
+    }
+
+    /// <summary>圆弧的极值点（最左/最右/最下/最上）若恰好贴包围盒边，取作界线落点——
+    /// 该侧没有直线段（纯圆弧端头）时使用，保证界线仍与图形接触。</summary>
+    private static void ConsiderEdgeArc(Point2d c, double r, double a0, double a1,
+        double minX, double maxX, double minY, double maxY, double tol,
+        ref Point3d? left, ref Point3d? right, ref Point3d? bottom, ref Point3d? top)
+    {
+        void At(double ang, bool asLeft, bool asRight, bool asBottom, bool asTop,
+            ref Point3d? holder)
+        {
+            double t = ang % (2.0 * System.Math.PI);
+            if (t < 0) t += 2.0 * System.Math.PI;
+            if (t < a0 - 1e-9 || t > a1 + 1e-9) return;
+            var p = new Point2d(c.X + r * System.Math.Cos(t), c.Y + r * System.Math.Sin(t));
+            if (asLeft && System.Math.Abs(p.X - minX) < tol) holder = new Point3d(p.X, p.Y, 0);
+            if (asRight && System.Math.Abs(p.X - maxX) < tol) holder = new Point3d(p.X, p.Y, 0);
+            if (asBottom && System.Math.Abs(p.Y - minY) < tol) holder = new Point3d(p.X, p.Y, 0);
+            if (asTop && System.Math.Abs(p.Y - maxY) < tol) holder = new Point3d(p.X, p.Y, 0);
+        }
+        At(System.Math.PI, true, false, false, false, ref left);           // 180°：x 最小
+        At(0.0, false, true, false, false, ref right);                     // 0°：x 最大
+        At(System.Math.PI * 1.5, false, false, true, false, ref bottom);   // 270°：y 最小
+        At(System.Math.PI * 0.5, false, false, false, true, ref top);      // 90°：y 最大
     }
 
     public static int Annotate(Database db, Transaction tr, BlockTableRecord space,

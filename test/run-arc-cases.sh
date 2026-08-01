@@ -43,11 +43,13 @@ for dxf in "$OUT"/*.dxf; do
         fail=1
         continue
     fi
-    # 累加所有 AUTODIM 行的 segment/arc/circle
-    seg=0; arc=0; cir=0
+    # 累加所有 AUTODIM 行的 overall/segment/arc/circle
+    ovr=0; seg=0; arc=0; cir=0
     while IFS= read -r line; do
         case "$line" in
             *AUTODIM:*)
+                v="$(echo "$line" | sed -n 's/.*overall=\([0-9][0-9]*\).*/\1/p')"
+                [ -n "$v" ] && ovr=$((ovr + v))
                 v="$(echo "$line" | sed -n 's/.*segment=\([0-9][0-9]*\).*/\1/p')"
                 [ -n "$v" ] && seg=$((seg + v))
                 v="$(echo "$line" | sed -n 's/.*arc=\([0-9][0-9]*\).*/\1/p')"
@@ -57,7 +59,7 @@ for dxf in "$OUT"/*.dxf; do
                 ;;
         esac
     done <<< "$clean"
-    echo "  $name: segment=$seg arc=$arc circle=$cir"
+    echo "  $name: overall=$ovr segment=$seg arc=$arc circle=$cir"
 
     # 预期 arc（同半径圆角 >=3 合并为 N×R，故不等于圆角个数）
     case "$name" in
@@ -68,9 +70,15 @@ for dxf in "$OUT"/*.dxf; do
         e_12fillet)            [ "$arc" -eq 2 ] || { echo "FAIL: $name arc=$arc 期望2(超量合并)"; fail=1; };;
         f_micro_10x8_r2)       [ "$arc" -eq 1 ] || { echo "FAIL: $name arc=$arc 期望1"; fail=1; };;
         g_huge_2000x1200_r100) [ "$arc" -eq 1 ] || { echo "FAIL: $name arc=$arc 期望1"; fail=1; };;
+        h_rect_closed)         { [ "$ovr" -eq 2 ] && [ "$seg" -eq 0 ]; } || { echo "FAIL: $name 应只出总体长宽(ovr=2,seg=0)"; fail=1; };;
+        i_rect_lines)          { [ "$ovr" -eq 2 ] && [ "$seg" -eq 0 ]; } || { echo "FAIL: $name 应只出总体长宽(ovr=2,seg=0)"; fail=1; };;
+        j_fillet_lines)        { [ "$ovr" -eq 2 ] && [ "$seg" -eq 4 ] && [ "$arc" -eq 1 ]; } || { echo "FAIL: $name 应总体100×80+4段直边+4×R10"; fail=1; };;
     esac
-    # 通用健康：每张图必须同时有分段和圆弧标注（合成图都含圆角+直边）
-    { [ "$seg" -ge 4 ] && [ "$arc" -ge 1 ]; } || { echo "FAIL: $name 分段/圆弧缺失"; fail=1; }
+    # 通用健康：除纯矩形 h/i 外，每张图必须有总体+分段+圆弧
+    case "$name" in
+        h_rect_closed|i_rect_lines) ;;
+        *) { [ "$ovr" -ge 2 ] && [ "$seg" -ge 4 ] && [ "$arc" -ge 1 ]; } || { echo "FAIL: $name 总体/分段/圆弧缺失"; fail=1; };;
+    esac
 done
 
 rm -f "$SCR"

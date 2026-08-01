@@ -137,6 +137,9 @@ internal static class OutlineDimensioner
             var lb = new Point2d(ln.EndPoint.X, ln.EndPoint.Y);
             double len = (lb - la).Length;
             if (len < minSegLen) continue;
+            // 贴包围盒边的整宽/整高直线（如普通矩形的底边）跳过：总体尺寸已标该值，
+            // 再标分段就是重复（与 Polyline 的 IsOutermostEdge 行为一致）。
+            if (ext != null && IsOutermostLine(la, lb, ext.Value)) continue;
             var key = la.X < lb.X || (la.X == lb.X && la.Y <= lb.Y) ? (la, lb) : (lb, la);
             if (!seenSeg.Add(key)) continue;
             lineCands.Add((la, lb, len));
@@ -206,6 +209,33 @@ internal static class OutlineDimensioner
             }
         }
         return (seg, arc);
+    }
+
+    /// <summary>独立 Line 是否恰好贴包围盒外缘整宽或整高（同 Polyline 版 IsOutermostEdge）。</summary>
+    private static bool IsOutermostLine(Point2d a, Point2d b, Extents3d ext)
+    {
+        double minX = ext.MinPoint.X, maxX = ext.MaxPoint.X;
+        double minY = ext.MinPoint.Y, maxY = ext.MaxPoint.Y;
+        const double tol = 1e-6;
+        if (System.Math.Abs(a.Y - b.Y) < tol)
+        {
+            bool atBottom = System.Math.Abs(a.Y - minY) < tol, atTop = System.Math.Abs(a.Y - maxY) < tol;
+            if (atBottom || atTop)
+            {
+                double lo = System.Math.Min(a.X, b.X), hi = System.Math.Max(a.X, b.X);
+                if (System.Math.Abs(lo - minX) < tol && System.Math.Abs(hi - maxX) < tol) return true;
+            }
+        }
+        if (System.Math.Abs(a.X - b.X) < tol)
+        {
+            bool atLeft = System.Math.Abs(a.X - minX) < tol, atRight = System.Math.Abs(a.X - maxX) < tol;
+            if (atLeft || atRight)
+            {
+                double lo = System.Math.Min(a.Y, b.Y), hi = System.Math.Max(a.Y, b.Y);
+                if (System.Math.Abs(lo - minY) < tol && System.Math.Abs(hi - maxY) < tol) return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>该直线段是否恰好贴包围盒外缘整宽或整高(底/顶整宽边、左/右整高边)。

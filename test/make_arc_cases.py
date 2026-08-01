@@ -93,6 +93,33 @@ def case_g(msp):
         msp.add_circle((300 + i * 300, 600), 80)
 
 
+def case_h(msp):
+    """普通矩形：闭合 LWPOLYLINE——只应出总体长宽，底边等整边不得重复标分段。"""
+    msp.add_lwpolyline([(0, 0), (100, 0), (100, 80), (0, 80)], close=True)
+
+
+def case_i(msp):
+    """普通矩形：4 条独立 LINE——同样只应出总体长宽，不得重复标分段。"""
+    msp.add_line((0, 0), (100, 0))
+    msp.add_line((100, 0), (100, 80))
+    msp.add_line((100, 80), (0, 80))
+    msp.add_line((0, 80), (0, 0))
+
+
+def case_j(msp):
+    """圆角矩形：4 条 LINE + 4 个独立 ARC——总体长宽按两条平行直线距离(100×80)，
+    直边分段 80/60 各一次，圆角 4×R10 合并，界线全部接触图形。"""
+    r = 10
+    msp.add_line((r, 0), (100 - r, 0))
+    msp.add_line((100, r), (100, 80 - r))
+    msp.add_line((100 - r, 80), (r, 80))
+    msp.add_line((0, 80 - r), (0, r))
+    msp.add_arc((100 - r, r), r, 0, 90)
+    msp.add_arc((100 - r, 80 - r), r, 270, 360)
+    msp.add_arc((r, 80 - r), r, 180, 270)
+    msp.add_arc((r, r), r, 90, 180)
+
+
 CASES = {
     "a_small_50x30_r5": case_a,
     "b_large_500x300_r25": case_b,
@@ -101,6 +128,9 @@ CASES = {
     "e_12fillet": case_e,
     "f_micro_10x8_r2": case_f,
     "g_huge_2000x1200_r100": case_g,
+    "h_rect_closed": case_h,
+    "i_rect_lines": case_i,
+    "j_fillet_lines": case_j,
 }
 
 

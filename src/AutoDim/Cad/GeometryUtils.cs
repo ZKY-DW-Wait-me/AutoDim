@@ -49,30 +49,45 @@ internal static class GeometryUtils
         var bottomIntervals = new List<(double lo, double hi)>();
         var topIntervals = new List<(double lo, double hi)>();
 
-        foreach (var id in ids)
-        {
-            if (tr.GetObject(id, OpenMode.ForRead) is not Polyline pl) continue;
-            int n = pl.NumberOfVertices;
-            for (int i = 0; i < n; i++)
-            {
-                if (!pl.Closed && i == n - 1) break;
-                int j = (i + 1) % n;
-                if (System.Math.Abs(pl.GetBulgeAt(i)) > 1e-9) continue;
-                Point2d a = pl.GetPoint2dAt(i), b = pl.GetPoint2dAt(j);
-                if (System.Math.Abs(a.Y - b.Y) < tol)   // 水平段
-                {
-                    var iv = (System.Math.Min(a.X, b.X), System.Math.Max(a.X, b.X));
-                    if (System.Math.Abs(a.Y - minY) < tol) bottomIntervals.Add(iv);
-                    if (System.Math.Abs(a.Y - maxY) < tol) topIntervals.Add(iv);
-                }
-                else if (System.Math.Abs(a.X - b.X) < tol)  // 垂直段
-                {
-                    var iv = (System.Math.Min(a.Y, b.Y), System.Math.Max(a.Y, b.Y));
-                    if (System.Math.Abs(a.X - minX) < tol) leftIntervals.Add(iv);
-                    if (System.Math.Abs(a.X - maxX) < tol) rightIntervals.Add(iv);
-                }
-            }
-        }
+          foreach (var id in ids)
+          {
+              if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
+              switch (ent)
+              {
+                  case Polyline pl:
+                  {
+                      int n = pl.NumberOfVertices;
+                      for (int i = 0; i < n; i++)
+                      {
+                          if (!pl.Closed && i == n - 1) break;
+                          int j = (i + 1) % n;
+                          if (System.Math.Abs(pl.GetBulgeAt(i)) > 1e-9) continue;
+                          AddInterval(pl.GetPoint2dAt(i), pl.GetPoint2dAt(j));
+                      }
+                      break;
+                  }
+                  case Line ln:
+                      AddInterval(new Point2d(ln.StartPoint.X, ln.StartPoint.Y),
+                                  new Point2d(ln.EndPoint.X, ln.EndPoint.Y));
+                      break;
+              }
+
+              void AddInterval(Point2d a, Point2d b)
+              {
+                  if (System.Math.Abs(a.Y - b.Y) < tol)   // 水平段
+                  {
+                      var iv = (System.Math.Min(a.X, b.X), System.Math.Max(a.X, b.X));
+                      if (System.Math.Abs(a.Y - minY) < tol) bottomIntervals.Add(iv);
+                      if (System.Math.Abs(a.Y - maxY) < tol) topIntervals.Add(iv);
+                  }
+                  else if (System.Math.Abs(a.X - b.X) < tol)  // 垂直段
+                  {
+                      var iv = (System.Math.Min(a.Y, b.Y), System.Math.Max(a.Y, b.Y));
+                      if (System.Math.Abs(a.X - minX) < tol) leftIntervals.Add(iv);
+                      if (System.Math.Abs(a.X - maxX) < tol) rightIntervals.Add(iv);
+                  }
+              }
+          }
 
         // 只有当该方向最外边是"≥2 段拼接覆盖"时才跳过总体：分段会标出各段、尺寸链隐含总宽。
         // 单条整边(如简单矩形底边)会被 OutlineDimensioner 当作最外边跳过分段、总体必须标，

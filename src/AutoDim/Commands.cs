@@ -377,12 +377,13 @@ public sealed class Commands
                 dimmedGroups += holeGroupCount;
             }
 
-            // 开放线段（不属于任何闭合轮廓/圆）：独立成组标分段，单条线只出一个长度，
-            // 多条不相连的散线不会被强行合并出跨部件总体尺寸。
+            // 开放线段（不属于任何闭合轮廓/圆）：独立成组标 总体+分段——
+            // 圆角矩形/腰形槽等 SW 导出轮廓常为独立 LINE+ARC（无闭合 Polyline），
+            // 必须出总体长宽（界线取自贴边直线段中点/弧极值点，不悬空）。
             if (openIds.Count > 0)
             {
                 sumDims += RunEngine(doc, openIds.ToArray(),
-                    new AutoDimOptions { Categories = DimCategory.Segment },
+                    new AutoDimOptions { Categories = DimCategory.Segment | DimCategory.Overall },
                     usePersistedCategories: false, purge: false);
                 dimmedGroups++;
             }
