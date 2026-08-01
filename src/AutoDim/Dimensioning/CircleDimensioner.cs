@@ -189,9 +189,9 @@ internal static class CircleDimensioner
         return (dia, pos);
     }
 
-    /// <summary>国标"水平引出线"直径标注：从圆周引一条水平线(实心箭头指向圆周)，
-    /// 文字 ⌀d 水平写在引出线末端上方。用 Line+Solid+MText 组合——小孔的文字比圆大，
-    /// "过圆心两端箭头+中间文字"放不下，引出线法是通用标准注法。</summary>
+    /// <summary>国标"折线引出线"直径标注：实心箭头从圆周引出，先斜线段(约 45°)再折成
+    /// 水平直线，文字 ⌀d 写在水平线段上方居中。用 Line+Solid+MText 组合——小孔的文字
+    /// 比圆大，"过圆心两端箭头+中间文字"放不下，折线引出线是 GB 标准注法。</summary>
     private static void AddDiameterLeader(Database db, Transaction tr, BlockTableRecord space,
         Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double baseGap)
     {
@@ -205,14 +205,23 @@ internal static class CircleDimensioner
         catch { }
         double leader = System.Math.Max(8.0, radius + baseGap * 1.2);
         int dir = 1;   // 向右引出
-        var pCirc = new Point3d(center.X + dir * radius, center.Y, 0);
-        var pEnd = new Point3d(center.X + dir * (radius + leader), center.Y, 0);
+        // 折线：圆周点(箭头) -> 斜线45° -> 水平线(文字区)
+        double slope = System.Math.Max(4.0, radius + baseGap * 0.8);   // 斜线水平/垂直分量
+        var pCirc = new Point3d(center.X + dir * radius, center.Y, 0);              // 箭头尖端(圆周)
+        var pBend = new Point3d(pCirc.X + dir * slope, pCirc.Y + slope, 0);         // 折点(斜线转水平)
+        double textW = System.Math.Max(10.0, 0.7 * txtH * txt.Length);              // 文字区宽度
+        var pEnd = new Point3d(pBend.X + textW, pBend.Y, 0);                        // 水平线末端
 
-        // 实心箭头：尖端在圆周
+        // 实心箭头：尖端在圆周，沿斜线方向指向圆心
+        double aLen = pBend.X - pCirc.X, aH = pBend.Y - pCirc.Y;
+        double aN = System.Math.Sqrt(aLen * aLen + aH * aH);
+        double ux = aLen / aN, uy = aH / aN;   // 斜线方向(从圆向外)
         using var solid = new Solid();
         solid.SetDatabaseDefaults(db);
-        solid.SetPointAt(0, new Point3d(pCirc.X - dir * asz, pCirc.Y + asz * 0.5, 0));
-        solid.SetPointAt(1, new Point3d(pCirc.X - dir * asz, pCirc.Y - asz * 0.5, 0));
+        solid.SetPointAt(0, new Point3d(pCirc.X - ux * asz - (-uy) * asz * 0.5,
+                                        pCirc.Y - uy * asz - ux * asz * 0.5, 0));
+        solid.SetPointAt(1, new Point3d(pCirc.X - ux * asz + (-uy) * asz * 0.5,
+                                        pCirc.Y - uy * asz + ux * asz * 0.5, 0));
         solid.SetPointAt(2, new Point3d(pCirc.X, pCirc.Y, 0));
         solid.SetPointAt(3, new Point3d(pCirc.X, pCirc.Y, 0));
         solid.LayerId = layerId;
@@ -220,19 +229,26 @@ internal static class CircleDimensioner
         tr.AddNewlyCreatedDBObject(solid, true);
         Cad.AdimMarker.Mark(db, tr, solid);
 
-        using var ln = new Line(pCirc, pEnd);
+        // 斜线段 + 水平段
+        using var ln1 = new Line(pCirc, pBend);
+        ln1.SetDatabaseDefaults(db);
+        ln1.LayerId = layerId;
+        space.AppendEntity(ln1);
+        tr.AddNewlyCreatedDBObject(ln1, true);
+        Cad.AdimMarker.Mark(db, tr, ln1);
+        using var ln = new Line(pBend, pEnd);
         ln.SetDatabaseDefaults(db);
         ln.LayerId = layerId;
         space.AppendEntity(ln);
         tr.AddNewlyCreatedDBObject(ln, true);
         Cad.AdimMarker.Mark(db, tr, ln);
 
-        // 文字：引出线末端上方、水平(Arial 内联保证 ⌀/汉字显示)
+        // 文字：水平线段上方居中、水平(Arial 内联保证 ⌀/汉字显示)
         using var mt = new MText();
         mt.SetDatabaseDefaults(db);
         mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{txt.Replace("%%c", "Ø")}}}";
         mt.TextHeight = txtH;
-        mt.Location = new Point3d(pEnd.X, pEnd.Y + txtH * 0.6, 0);
+        mt.Location = new Point3d(pBend.X + textW * 0.5, pBend.Y + txtH * 0.6, 0);
         mt.Attachment = AttachmentPoint.MiddleCenter;
         mt.LayerId = layerId;
         space.AppendEntity(mt);
