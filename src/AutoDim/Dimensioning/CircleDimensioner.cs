@@ -94,7 +94,10 @@ internal static class CircleDimensioner
                 catch { }
                 double fitTextW = 0.7 * dimTxtH * txt.Length;
                 double fitAsz = System.Math.Min(System.Math.Max(0.6, rep.Radius * 0.9), dimAsz);
-                if (rep.Radius * 2.0 >= fitTextW + 2 * fitAsz + 2.0)
+                // 圆直径 >= 文字宽 + 两端箭头 + 0.5 间隙 即可过圆心标注(GB 标准直径注法)；
+                // 旧阈值 +2.0 间隙太苛刻，Ø6 这类中等圆也被误归到引出线。小孔(Ø1.55 等)
+                // 文字+箭头放不下仍走引出线。
+                if (rep.Radius * 2.0 >= fitTextW + 2 * fitAsz + 0.5)
                 {
                     AddDiameterDim(db, tr, space, rep.Center, rep.Radius, txt, dimStyleId, layerId);
                 }
