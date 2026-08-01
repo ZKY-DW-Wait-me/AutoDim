@@ -42,19 +42,27 @@ internal static class DimStyleSetup
         return id;
     }
 
-    /// <summary>创建/复用 ADIM 专用文字样式：Arial(TTF)——与圆直径引出线 MText 的内联
-    /// Arial 字体一致，避免"圆标注文字和其他标注字体不一样"的不协调；Arial 自带 ⌀/×/汉字。</summary>
+    /// <summary>创建/复用 ADIM 专用文字样式：国标字体 gbeitc.shx(西文)+gbcbig.shx(中文)，
+    /// 机械图纸标准字体；圆直径引出线 MText 也使用该样式，保证全图标注字体统一为国标。</summary>
     private static ObjectId EnsureTextStyle(Database db, Transaction tr)
     {
         const string styleName = "AutoDimText";
         var tst = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
         if (tst.Has(styleName))
+        {
+            // 已有(可能是上一版误建成的 Arial 样式)：强制改回国标字体，
+            // 否则旧图纸里残留的样式不会生效
+            var old = (TextStyleTableRecord)tr.GetObject(tst[styleName], OpenMode.ForWrite);
+            old.FileName = "gbeitc.shx";
+            old.BigFontFileName = "gbcbig.shx";
             return tst[styleName];
+        }
         tst.UpgradeOpen();
         var rec = new TextStyleTableRecord
         {
             Name = styleName,
-            FileName = "arial.ttf",
+            FileName = "gbeitc.shx",
+            BigFontFileName = "gbcbig.shx",
         };
         ObjectId id = tst.Add(rec);
         tr.AddNewlyCreatedDBObject(rec, true);

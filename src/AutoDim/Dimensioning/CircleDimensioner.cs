@@ -196,11 +196,13 @@ internal static class CircleDimensioner
         Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId, double baseGap)
     {
         double asz = 2.5, txtH = 2.5;
+        ObjectId textStyleId = ObjectId.Null;
         try
         {
             var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
             asz = dst.Dimasz * dst.Dimscale;
             txtH = dst.Dimtxt * dst.Dimscale;
+            textStyleId = dst.Dimtxsty;   // ADIM 样式的国标文字样式
         }
         catch { }
         double leader = System.Math.Max(8.0, radius + baseGap * 1.2);
@@ -243,10 +245,13 @@ internal static class CircleDimensioner
         tr.AddNewlyCreatedDBObject(ln, true);
         Cad.AdimMarker.Mark(db, tr, ln);
 
-        // 文字：水平线段上方居中、水平(Arial 内联保证 ⌀/汉字显示)
+        // 文字：水平线段上方居中、水平。用 ADIM 的国标文字样式(gbeitc.shx+gbcbig.shx)，
+        // 与其他所有标注字体统一；直径符号用 %%c(SHX 标准转义)，× 由 gbcbig 大字体渲染。
         using var mt = new MText();
         mt.SetDatabaseDefaults(db);
-        mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{txt.Replace("%%c", "Ø")}}}";
+        if (!textStyleId.IsNull)
+            mt.TextStyleId = textStyleId;
+        mt.Contents = txt.Replace("Ø", "%%c");
         mt.TextHeight = txtH;
         mt.Location = new Point3d(pBend.X + textW * 0.5, pBend.Y + txtH * 0.6, 0);
         mt.Attachment = AttachmentPoint.MiddleCenter;
