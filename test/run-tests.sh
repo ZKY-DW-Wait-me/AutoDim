@@ -71,4 +71,28 @@ CL1="$(echo "$CLEAN" | grep "ADIMCLEAN:" | tail -2 | head -1)"
 CL2="$(echo "$CLEAN" | grep "ADIMCLEAN:" | tail -1)"
 [ -n "$CL1" ] && [ "$CL1" = "$CL2" ] || { echo "FAIL: 重复运行 ADIMCLEAN 结果不一致(非幂等)"; fail=1; }
 
+echo "== 5) 第二张图泛化(合成 extra.dxf) =="
+EXTRA="$ROOT/test/extra.dxf"
+python "$ROOT/test/make_extra_dxf.py" "$(cygpath -w "$EXTRA")" || { echo "FAIL: 生成 extra.dxf 失败"; exit 1; }
+SCR2="$ROOT/test/run-headless.extra.scr"
+cat > "$SCR2" <<EOF
+SECURELOAD
+0
+NETLOAD
+$DLL_WIN
+ADIMCLEAN
+EOF
+LOG2="$ROOT/test/extra-run.log"
+"$POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" \
+    -InputDwg "$(cygpath -w "$EXTRA")" -Script "$(cygpath -w "$SCR2")" \
+    -Log "$(cygpath -w "$LOG2")" -TimeoutSec 90
+rm -f "$SCR2"
+CLEAN2="$(tr -d '\000' < "$LOG2")"
+echo "$CLEAN2" | grep -q "ADIMCLEAN:" || { echo "FAIL: 第二张图未执行清洗"; fail=1; }
+f2="$(echo "$CLEAN2" | sed -n 's/.*faces=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+{ [ -n "$f2" ] && [ "$f2" -ge 3 ]; } || { echo "FAIL: 第二张图闭合面过少($f2)"; fail=1; }
+tot2="$(echo "$CLEAN2" | sed -n 's/.*落地 \([0-9][0-9]*\) 个尺寸.*/\1/p' | head -n1)"
+tot2="$(echo "$CLEAN2" | sed -n 's/.*landed=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+{ [ -n "$tot2" ] && [ "$tot2" -gt 0 ]; } || { echo "FAIL: 第二张图标注数为 0"; fail=1; }
+
 if [ "$fail" = "0" ]; then echo "== PASS =="; exit 0; else echo "== TESTS FAILED =="; exit 1; fi

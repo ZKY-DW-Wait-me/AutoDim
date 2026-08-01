@@ -7,8 +7,8 @@
 - 碎片噪声（短随机线段）
 - 开放链碎片（不闭合的长段）
 """
-import math
 import random
+import sys
 
 import ezdxf
 
@@ -61,8 +61,9 @@ def main():
     msp.add_line((600, 0), (600, 60))
     msp.add_line((560, 60), (600, 60))
 
-    doc.saveas(r"D:\vscode\project_Autocad-Outline\test\extra.dxf")
-    print("OK -> test/extra.dxf")
+    out = sys.argv[1] if len(sys.argv) > 1 else "test/extra.dxf"
+    doc.saveas(out)
+    print(f"OK -> {out}")
 
 
 if __name__ == "__main__":

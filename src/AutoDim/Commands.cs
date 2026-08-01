@@ -448,7 +448,9 @@ public sealed class Commands
                 var (textHits, textTop) = CountDimTextOverlaps(db);
                 ed.WriteMessage(
                     $"    -> 合计: {dimmedGroups} 组 / 生成 {sumDims} 个尺寸、落地 {finalDims} 个尺寸 " +
-                    $"+ {finalNotes} 个注记 / ADIM 文字撞车 {textHits} 对 [AABB 重叠 {overlaps}] [{overlapTop}]\n");
+                    $"+ {finalNotes} 个注记 / ADIM 文字撞车 {textHits} 对 " +
+                    $"[AABB 重叠 {overlaps}] [{overlapTop}] " +
+                    $"(landed={finalDims} notes={finalNotes} groups={dimmedGroups} textHits={textHits})\n");
             }
         }
         catch (Autodesk.AutoCAD.Runtime.Exception ex)
