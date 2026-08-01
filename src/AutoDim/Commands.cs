@@ -26,8 +26,7 @@ public sealed class PluginInit : IExtensionApplication
     {
         Document? doc = AcApp.DocumentManager.MdiActiveDocument;
         doc?.Editor.WriteMessage(
-            "\nAutoDim 已加载。命令: AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / " +
-            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN / ADIMDUMP / ADIMVER\n");
+            "\nAutoDim 已加载。命令: AUTODIM / ADIMALL / ADIMCOORD / ADIMCLEAN / ADIMCFG / ADIMVER\n");
     }
 
     public void Terminate() { }
@@ -81,29 +80,6 @@ public sealed class Commands
     [CommandMethod("ADIMALL", CommandFlags.Modal)]
     public void AdimAll() => RunWithMode(TriggerMode.All);
 
-    /// <summary>框选区域内标注。</summary>
-    [CommandMethod("ADIMWIN", CommandFlags.Modal)]
-    public void AdimWin() => RunWithMode(TriggerMode.Window);
-
-    /// <summary>对选中对象标注（pickfirst 优先，否则交互选择）。</summary>
-    [CommandMethod("ADIMSEL", CommandFlags.UsePickSet | CommandFlags.Modal)]
-    public void AdimSel()
-    {
-        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
-        if (doc == null) return;
-        Editor ed = doc.Editor;
-
-        ObjectId[]? ids = SelectionService.Acquire(ed, TriggerMode.Pickfirst)
-                          ?? SelectionService.Acquire(ed, TriggerMode.Selection);
-        if (ids == null) { ed.WriteMessage("\n未选择对象。\n"); return; }
-
-        RunAutoOrClean(doc, ids);
-    }
-
-    /// <summary>生成测试图（100×60 矩形 + 2 孔）。</summary>
-    [CommandMethod("ADIMSAMPLE", CommandFlags.Modal)]
-    public void AdimSample() => SampleBuilder.Build(AcApp.DocumentManager.MdiActiveDocument);
-
     /// <summary>模式 A：坐标标注法。基准=最左下顶点，每个顶点引 X/Y 坐标到图边。
     /// 适用于任意倾斜多边形——无角度弧、无方向歧义、转角不拥挤(GB 复杂板类零件推荐画法)。</summary>
     [CommandMethod("ADIMCOORD", CommandFlags.UsePickSet | CommandFlags.Modal)]
@@ -118,41 +94,6 @@ public sealed class Commands
         if (ids == null || ids.Length == 0) { ed.WriteMessage("\n未选择对象。\n"); return; }
 
         RunCoordEngine(doc, ids);
-    }
-
-    /// <summary>设置/清除 ADIM 标注的固定 Dimscale。
-    /// 输入正数=固定 scale(持久化到 NOD，之后所有 ADIM 标注用此值，不再自适应)；
-    /// 输入 0 或负数=清除固定值，恢复按包围盒自适应。</summary>
-    [CommandMethod("ADIMSCALE", CommandFlags.Modal)]
-    public void AdimScale()
-    {
-        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
-        if (doc == null) return;
-        Database db = doc.Database;
-        Editor ed = doc.Editor;
-
-        using Transaction tr = db.TransactionManager.StartTransaction();
-        double? cur = Cad.DimStyleSetup.ReadUserScale(db, tr);
-        tr.Commit();
-        ed.WriteMessage(cur.HasValue
-            ? $"\n当前固定 Dimscale = {cur.Value} (输入 0 或负数恢复自适应)"
-            : "\n当前为自适应 Dimscale (按包围盒，0.5~3.0)");
-
-        var po = new PromptDoubleOptions("\n输入 Dimscale (0 或负数=恢复自适应): ");
-        po.AllowNegative = true; po.AllowZero = true;
-        var pr = ed.GetDouble(po);
-        if (pr.Status != PromptStatus.OK) return;
-
-        if (pr.Value <= 0)
-        {
-            Cad.DimStyleSetup.SetUserScale(db, null);
-            ed.WriteMessage("\n已清除固定 Dimscale，恢复自适应。\n");
-        }
-        else
-        {
-            Cad.DimStyleSetup.SetUserScale(db, pr.Value);
-            ed.WriteMessage($"\n已固定 Dimscale = {pr.Value}。后续 ADIM*/ADIMCOORD 标注将用此值。\n");
-        }
     }
 
     /// <summary>查看当前加载的插件版本与状态：DLL 路径/构建时间/AutoCAD 版本/配置开关，
@@ -180,23 +121,20 @@ public sealed class Commands
         catch { }
         bool autoClean = false;
         string cats = "";
-        string styleSrc = "";
-        using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
-        {
-            autoClean = Cad.OptionsStore.ReadAutoClean(doc.Database, tr);
-            int c = Cad.OptionsStore.ReadCategories(doc.Database, tr);
-            cats = $"Overall={((Config.DimCategory)c).HasFlag(Config.DimCategory.Overall)} " +
-                   $"Segment={((Config.DimCategory)c).HasFlag(Config.DimCategory.Segment)} " +
-                   $"Holes={((Config.DimCategory)c).HasFlag(Config.DimCategory.Holes)}";
-            styleSrc = Cad.OptionsStore.ReadUseCurrentStyle(doc.Database, tr) ? "当前模板" : "ADIM国标";
-            tr.Commit();
-        }
-        ed.WriteMessage(
-            $"\nAutoDim v{ver} (构建 {buildTime})\n" +
-            $"  DLL: {path}\n" +
-            $"  AutoCAD: {acadVer}\n" +
-            $"  自动清洗: {(autoClean ? "开" : "关")} / 类别: {cats}\n" +
-            $"  标注样式来源: {styleSrc}\n");
+          using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+          {
+              autoClean = Cad.OptionsStore.ReadAutoClean(doc.Database, tr);
+              int c = Cad.OptionsStore.ReadCategories(doc.Database, tr);
+              cats = $"Overall={((Config.DimCategory)c).HasFlag(Config.DimCategory.Overall)} " +
+                     $"Segment={((Config.DimCategory)c).HasFlag(Config.DimCategory.Segment)} " +
+                     $"Holes={((Config.DimCategory)c).HasFlag(Config.DimCategory.Holes)}";
+              tr.Commit();
+          }
+          ed.WriteMessage(
+              $"\nAutoDim v{ver} (构建 {buildTime})\n" +
+              $"  DLL: {path}\n" +
+              $"  AutoCAD: {acadVer}\n" +
+              $"  自动清洗: {(autoClean ? "开" : "关")} / 类别: {cats}\n");
     }
 
     /// <summary>
@@ -397,7 +335,7 @@ public sealed class Commands
                     var msP = (BlockTableRecord)trP.GetObject(btP[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                     Extents3d? cleanExt = Cad.GeometryUtils.CombinedExtents(trP, drawnIds.ToArray());
                     double bufP = cleanExt.HasValue ? 6.0 * Cad.GeometryUtils.AutoGap(cleanExt.Value) : 0.0;
-                    PurgeAdimEntities(trP, msP, "ADIM", cleanExt, bufP);
+                    PurgeAdimEntities(trP, msP, cleanExt, bufP);
                     trP.Commit();
                 }
 
@@ -565,43 +503,6 @@ public sealed class Commands
         catch { }
     }
 
-    /// <summary>清洗参数命令：逐个输入 吸附公差/合并公差/最短保留长度/最小面积/最大细长度（0=恢复默认）。</summary>
-    [CommandMethod("ADIMCLN", CommandFlags.Modal)]
-    public void AdimCln()
-    {
-        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
-        if (doc == null) return;
-        Database db = doc.Database;
-        Editor ed = doc.Editor;
-
-        double[] cur;
-        using (Transaction tr0 = db.TransactionManager.StartTransaction())
-        {
-            cur = Cad.OptionsStore.ReadCleanParams(db, tr0);
-            tr0.Commit();
-        }
-
-        string[] names =
-        {
-            "吸附公差 SnapTol", "合并公差 MergeTol", "最短保留长度 MinKeepLength",
-            "最小面积 MinFaceArea", "最大细长度 MaxFaceThinness", "开放链闭合 LinkGap(0=自动)",
-        };
-        var vals = (double[])cur.Clone();
-        for (int i = 0; i < vals.Length; i++)
-        {
-            var po = new PromptDoubleOptions($"\n{names[i]} <{vals[i]}>: ");
-            po.AllowNegative = true;
-            po.AllowZero = true;
-            var pr = ed.GetDouble(po);
-            if (pr.Status != PromptStatus.OK) return;
-            vals[i] = pr.Value;
-        }
-        Cad.OptionsStore.WriteCleanParams(db, vals);
-        ed.WriteMessage(
-            $"\n已保存清洗参数: SnapTol={vals[0]} MergeTol={vals[1]} MinKeep={vals[2]} " +
-            $"MinArea={vals[3]} Thinness={vals[4]} LinkGap={vals[5]}\n");
-    }
-
     private static void RunCoordEngine(Document doc, ObjectId[] ids)
     {
         Database db = doc.Database;
@@ -611,23 +512,13 @@ public sealed class Commands
         {
             using Transaction tr = db.TransactionManager.StartTransaction();
             Extents3d? extBox = Cad.GeometryUtils.CombinedExtents(tr, ids);
-              ObjectId layerId;
-              ObjectId dimStyleId;
-              if (Cad.OptionsStore.ReadUseCurrentStyle(db, tr))
-              {
-                  layerId = db.Clayer;    // 用户模板：当前图层
-                  dimStyleId = db.Dimstyle;   // 用户模板：当前标注样式
-              }
-              else
-              {
-                  layerId = LayerHelper.EnsureLayer(db, tr, "ADIM", 1);  // 红色：标注
-                  dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
-              }
+                ObjectId layerId = db.Clayer;      // 当前图层(CAD 模板)
+                ObjectId dimStyleId = db.Dimstyle; // 当前标注样式(CAD 模板)
             double baseGap = extBox != null ? GeometryUtils.AutoGap(extBox.Value) : 10.0;
 
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-            PurgeAdimEntities(tr, ms, "ADIM", extBox, 0);
+            PurgeAdimEntities(tr, ms, extBox, 0);
 
             count = CoordinateDimensioner.Annotate(db, tr, ms, ids, extBox, dimStyleId, layerId, baseGap);
             tr.Commit();
@@ -673,29 +564,14 @@ public sealed class Commands
         ed.WriteMessage($"\n自动清洗开关: {(autoClean ? "开" : "关")} " +
                         "(开启后 AUTODIM/ADIMALL/ADIMWIN/ADIMSEL 先清洗再标注)");
 
-        bool useCur;
-        using (Transaction trS = db.TransactionManager.StartTransaction())
-        {
-            useCur = Cad.OptionsStore.ReadUseCurrentStyle(db, trS);
-            trS.Commit();
-        }
-        ed.WriteMessage($"\n标注样式来源: {(useCur ? "当前模板(当前标注样式+当前图层)" : "ADIM国标样式(插件默认)")} " +
-                        "(切到当前模板后完全跟随你调好的图纸模板)");
-
         var kw = new PromptKeywordOptions(
-            "\n设置 [总体(O)/分段(E)/孔圆(H)/全部(ALL)/清空(NONE)/清洗开关(C)/模板样式(T)]: ");
+            "\n设置 [总体(O)/分段(E)/孔圆(H)/全部(ALL)/清空(NONE)/清洗开关(C)]: ");
         kw.Keywords.Add("O"); kw.Keywords.Add("E"); kw.Keywords.Add("H");
-        kw.Keywords.Add("ALL"); kw.Keywords.Add("NONE"); kw.Keywords.Add("C"); kw.Keywords.Add("T");
+        kw.Keywords.Add("ALL"); kw.Keywords.Add("NONE"); kw.Keywords.Add("C");
         kw.AllowNone = true;
         var kr = ed.GetKeywords(kw);
         if (kr.Status == PromptStatus.OK)
         {
-            if (kr.StringResult == "T")
-            {
-                Cad.OptionsStore.WriteUseCurrentStyle(db, !useCur);
-                ed.WriteMessage($"\n标注样式来源已切换为: {(!useCur ? "当前模板" : "ADIM国标样式")}（持久化到本图）。\n");
-                return;
-            }
             if (kr.StringResult == "C")
             {
                 Cad.OptionsStore.WriteAutoClean(db, !autoClean);
@@ -727,27 +603,25 @@ public sealed class Commands
             try { ed.WriteMessage($"\n  {v} = {AcApp.GetSystemVariable(v)}"); }
             catch { ed.WriteMessage($"\n  {v} = (N/A)"); }
         }
-        ed.WriteMessage($"\n  CurrentDimStyle = {db.Dimstyle}");
+        string curStyleName = "?";
+        try
+        {
+            using Transaction trS = db.TransactionManager.StartTransaction();
+            var dst = (DimStyleTable)trS.GetObject(db.DimStyleTableId, OpenMode.ForRead);
+            if (dst.Has(db.Dimstyle))
+            {
+                var rec = (DimStyleTableRecord)trS.GetObject(db.Dimstyle, OpenMode.ForRead);
+                curStyleName = rec.Name;
+            }
+            trS.Commit();
+        }
+        catch { }
+        ed.WriteMessage($"\n  当前标注样式 = {curStyleName}（标注全部使用它）");
 
         ed.WriteMessage("\n== 图中 Dimension 实体 ==");
         using Transaction tr = db.TransactionManager.StartTransaction();
         var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
         var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-        // 打印 ADIM 样式是否存在、其记录里的实际值
-        try
-        {
-            using Transaction tr2 = db.TransactionManager.StartTransaction();
-            var dst = (DimStyleTable)tr2.GetObject(db.DimStyleTableId, OpenMode.ForRead);
-            if (dst.Has("ADIM"))
-            {
-                var rec = (DimStyleTableRecord)tr2.GetObject(dst["ADIM"], OpenMode.ForRead);
-                ed.WriteMessage($"\n  ADIM样式存在: Dimtxt={rec.Dimtxt} Dimasz={rec.Dimasz} Dimscale={rec.Dimscale} Dimtad={rec.Dimtad} Dimtix={rec.Dimtix}");
-            }
-            else ed.WriteMessage("\n  ADIM样式不存在!");
-            tr2.Commit();
-        }
-        catch (System.Exception ex) { ed.WriteMessage($"\n  读ADIM样式失败: {ex.Message}"); }
-
         int k = 0;
         foreach (ObjectId id in ms)
         {
@@ -768,116 +642,7 @@ public sealed class Commands
         ed.WriteMessage("\n");
     }
 
-    /// <summary>
-    /// 诊断命令：打印图中所有多段线的每段几何（直线/圆弧、端点、弧心、半径、bulge、弧中点、外凸方向），
-    /// 用于核对圆角引线朝向等几何判断是否正确。不做任何标注。
-    /// </summary>
-    [CommandMethod("ADIMDEBUG", CommandFlags.Modal)]
-    public void AdimDebug()
-    {
-        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
-        if (doc == null) return;
-        Database db = doc.Database;
-        Editor ed = doc.Editor;
-
-        using Transaction tr = db.TransactionManager.StartTransaction();
-        var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-        var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-
-        int idx = 0;
-        foreach (ObjectId id in ms)
-        {
-            if (tr.GetObject(id, OpenMode.ForRead) is not Polyline pl) continue;
-            ed.WriteMessage($"\n[Polyline #{idx}] layer={pl.Layer} vertices={pl.NumberOfVertices} closed={pl.Closed}");
-            Point2d c = DebugCentroid(pl);
-            ed.WriteMessage($"  centroid=({c.X:F2},{c.Y:F2})");
-            int n = pl.NumberOfVertices;
-            for (int i = 0; i < n; i++)
-            {
-                if (!pl.Closed && i == n - 1) break;
-                int j = (i + 1) % n;
-                double bulge = pl.GetBulgeAt(i);
-                Point2d a = pl.GetPoint2dAt(i), b = pl.GetPoint2dAt(j);
-                if (System.Math.Abs(bulge) < 1e-9)
-                {
-                    ed.WriteMessage($"\n  seg{i}: LINE ({a.X:F1},{a.Y:F1})->({b.X:F1},{b.Y:F1}) len={(b - a).Length:F2}");
-                }
-                else
-                {
-                    var arc = pl.GetArcSegment2dAt(i);
-                    Point2d ce = arc.Center;
-                    double r = arc.Radius;
-                    Vector2d toA = (a - ce); toA = toA / toA.Length;
-                    Vector2d toB = (b - ce); toB = toB / toB.Length;
-                    Vector2d bis = toA + toB; bis = bis / bis.Length;
-                    bool bisOutward = bis.DotProduct(c - ce) <= 0; // 远离质心=外凸
-                    Point2d arcMid = ce + (bisOutward ? bis : -bis) * r;
-                    ed.WriteMessage($"\n  seg{i}: ARC  bulge={bulge:F4} R={r:F2} center=({ce.X:F2},{ce.Y:F2})");
-                    ed.WriteMessage($" a=({a.X:F1},{a.Y:F1}) b=({b.X:F1},{b.Y:F1})");
-                    ed.WriteMessage($" arcMid=({arcMid.X:F2},{arcMid.Y:F2}) outwardToCentroid={bisOutward}");
-                }
-            }
-            idx++;
-        }
-        tr.Commit();
-        ed.WriteMessage("\n");
-    }
-
-    /// <summary>
-    /// 诊断命令（非交互，供无界面基准/日志分析）：仅输出 ADIM 图层所有 Dimension 的
-    /// 类型/文字/测量点/尺寸线位置/外接框，不修改任何内容。布局优化时用于核对重叠明细。
-    /// </summary>
-    [CommandMethod("ADIMDUMP", CommandFlags.Modal)]
-    public void AdimDump()
-    {
-        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
-        if (doc == null) return;
-        Database db = doc.Database;
-        Editor ed = doc.Editor;
-
-        using Transaction tr = db.TransactionManager.StartTransaction();
-        var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-        var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-        int k = 0;
-        foreach (ObjectId id in ms)
-        {
-            if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
-            if (ent.Layer != "ADIM") continue;
-            if (ent is Dimension d)
-            {
-                string ext = "";
-                try
-                {
-                    var g = d.GeometricExtents;
-                    ext = $" ext=({g.MinPoint.X:F2},{g.MinPoint.Y:F2})-({g.MaxPoint.X:F2},{g.MaxPoint.Y:F2})";
-                }
-                catch { }
-                string txtBox = "";
-                var tb = DimTextExtents(tr, d);
-                if (tb.HasValue)
-                    txtBox = $" txtBox=({tb.Value.MinPoint.X:F2},{tb.Value.MinPoint.Y:F2})-({tb.Value.MaxPoint.X:F2},{tb.Value.MaxPoint.Y:F2})";
-                else
-                    txtBox = " txtBox=(null)";
-                ed.WriteMessage(
-                    $"\n  [{k}] {d.GetType().Name} text=\"{d.DimensionText}\" {DescribeDim(d)}{ext}{txtBox} " +
-                    $"rot={d.TextRotation:F2} layer={d.Layer}");
-            }
-            else if (ent is MText mt && Cad.AdimMarker.IsMarked(mt))
-            {
-                string mExt = "";
-                try
-                {
-                    var g = mt.GeometricExtents;
-                    mExt = $" ext=({g.MinPoint.X:F2},{g.MinPoint.Y:F2})-({g.MaxPoint.X:F2},{g.MaxPoint.Y:F2})";
-                }
-                catch { }
-                ed.WriteMessage($"\n  [{k}] CountNote text=\"{mt.Contents}\"{mExt} layer={mt.Layer}");
-            }
-            k++;
-        }
-        tr.Commit();
-        ed.WriteMessage($"\nADIMDUMP: {k} 个标注\n");
-    }
+    // ---- 私有辅助 ----
 
     /// <summary>按子类取标注关键坐标(尺寸界线起止+尺寸线位置)，基类 Dimension 无这些属性。</summary>
     private static string DescribeDim(Dimension d)
@@ -897,30 +662,12 @@ public sealed class Commands
         }
     }
 
-    private static Autodesk.AutoCAD.Geometry.Point2d DebugCentroid(Polyline pl)
-    {
-        double cx = 0, cy = 0, area = 0;
-        int n = pl.NumberOfVertices;
-        for (int i = 0; i < n; i++)
-        {
-            int j = (i + 1) % n;
-            var pi = pl.GetPoint2dAt(i); var pj = pl.GetPoint2dAt(j);
-            double cross = pi.X * pj.Y - pj.X * pi.Y;
-            area += cross; cx += (pi.X + pj.X) * cross; cy += (pi.Y + pj.Y) * cross;
-        }
-        area *= 0.5;
-        if (System.Math.Abs(area) < 1e-9) return pl.GetPoint2dAt(0);
-        return new Autodesk.AutoCAD.Geometry.Point2d(cx / (6 * area), cy / (6 * area));
-    }
-
-    // ---- 私有辅助 ----
-
-    /// <summary>删除 ADIM 和 ADIM_CENTER 图层上【带 AUTODIM XData 标记】且落在指定区域内的
-    /// Dimension/Line。只删自己生成的、且只删本区域内的——用户手标在同一图层的不会被擦，
-    /// 其它区域自己生成的也保留。region=null 时清全部带标记的(整图刷新)。
+    /// <summary>删除【带 AUTODIM XData 标记】且落在指定区域内的 Dimension/Line/MText。
+    /// 标注现在画在用户当前图层(跟随 CAD 模板)，不能再按图层过滤——按标记精确识别
+    /// 自己生成的实体，用户手标永远不会被擦；region=null 时清全部带标记的(整图刷新)。
     /// buffer 取 5×baseGap，足以覆盖分层标注向外偏移的距离。</summary>
     private static void PurgeAdimEntities(Transaction tr, BlockTableRecord ms,
-        string adimLayer, Extents3d? region, double buffer)
+        Extents3d? region, double buffer)
     {
         Extents3d? buf = null;
         if (region.HasValue)
@@ -938,7 +685,6 @@ public sealed class Commands
             catch { continue; }
             if (ent == null) continue;
             if (ent is not Dimension && ent is not Line && ent is not MText) continue;
-            if (ent.Layer != adimLayer && ent.Layer != "ADIM_CENTER") continue;
             // 只删自己生成的(带 AUTODIM 标记)——用户手标的保留
             if (!Cad.AdimMarker.IsMarked(ent)) continue;
             if (buf.HasValue)
@@ -993,6 +739,7 @@ public sealed class Commands
         Database db = doc.Database;
         Editor ed = doc.Editor;
         DimResult r = default;
+        string layerName = "?";
 
         try
         {
@@ -1009,20 +756,11 @@ public sealed class Commands
                 opt.Categories = (DimCategory)cats;
             }
 
-              // 标注样式来源：默认插件 ADIM 国标样式(字体/箭头/比例固化，不碰用户全局变量)；
-              // ADIMCFG 切到"当前模板"后改用当前标注样式+当前图层，完全跟随用户模板。
-              ObjectId layerId;
-              ObjectId dimStyleId;
-              if (Cad.OptionsStore.ReadUseCurrentStyle(db, tr))
-              {
-                  layerId = db.Clayer;
-                  dimStyleId = db.Dimstyle;
-              }
-              else
-              {
-                  layerId = LayerHelper.EnsureLayer(db, tr, opt.LayerName, 1);
-                  dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
-              }
+              // 标注只用当前图纸的标注样式+当前图层(CAD 模板)：样板里调什么就用什么
+              ObjectId layerId = db.Clayer;
+              ObjectId dimStyleId = db.Dimstyle;
+              try { layerName = (tr.GetObject(db.Clayer, OpenMode.ForRead) as LayerTableRecord)?.Name ?? "?"; }
+              catch { }
 
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
@@ -1033,7 +771,7 @@ public sealed class Commands
             if (purge)
             {
                 double buf = extBox.HasValue ? 5.0 * GeometryUtils.AutoGap(extBox.Value) : 0.0;
-                PurgeAdimEntities(tr, ms, opt.LayerName, extBox, buf);
+                PurgeAdimEntities(tr, ms, extBox, buf);
             }
 
             r = DimensionEngine.Run(db, tr, ms, ids, opt, dimStyleId, layerId, extBox);
@@ -1049,7 +787,7 @@ public sealed class Commands
         ed.WriteMessage(
             $"\nAUTODIM: overall={r.Overall} segment={r.Segment} arc={r.Arc} " +
             $"circle={r.Circle} position={r.Position} angular={r.Angular} total={r.Total} " +
-            $"skipW={r.SkipW} skipH={r.SkipH} (layer={opt.LayerName})\n");
+            $"skipW={r.SkipW} skipH={r.SkipH} (layer={layerName})\n");
         return r.Total;
     }
 
@@ -1065,8 +803,8 @@ public sealed class Commands
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
             foreach (ObjectId id in ms)
             {
-                if (tr.GetObject(id, OpenMode.ForRead) is not Dimension d) continue;
-                if (d.Layer != "ADIM") continue;
+                  if (tr.GetObject(id, OpenMode.ForRead) is not Dimension d) continue;
+                  if (!Cad.AdimMarker.IsMarked(d)) continue;   // 只统计插件生成的标注
                 try
                 {
                     boxes.Add(d.GeometricExtents);
@@ -1111,9 +849,9 @@ public sealed class Commands
         foreach (ObjectId id in ms)
         {
             if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
-            if (ent.Layer != "ADIM") continue;
+            if (!Cad.AdimMarker.IsMarked(ent)) continue;   // 只统计插件生成的标注
             if (ent is Dimension) dims++;
-            else if (ent is MText mt && Cad.AdimMarker.IsMarked(mt)) notes++;
+            else if (ent is MText) notes++;
         }
         tr.Commit();
         return (dims, notes);
@@ -1133,14 +871,14 @@ public sealed class Commands
             foreach (ObjectId id in ms)
             {
                 if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
-                if (ent.Layer != "ADIM") continue;
+                if (!Cad.AdimMarker.IsMarked(ent)) continue;   // 只统计插件生成的标注
                 if (ent is Dimension d)
                 {
                     boxes.Add(DimTextExtents(tr, d));
                     types.Add(d.GetType().Name);
                     radialCenters.Add(d is RadialDimension rd ? (Point3d?)rd.Center : null);
                 }
-                else if (ent is MText mt && Cad.AdimMarker.IsMarked(mt))
+                else if (ent is MText mt)
                 {
                     try { boxes.Add(mt.GeometricExtents); }
                     catch { boxes.Add(null); }

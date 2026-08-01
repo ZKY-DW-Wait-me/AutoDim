@@ -66,7 +66,7 @@ internal static class LayoutSolver
         foreach (ObjectId id in ms)
         {
             if (tr.GetObject(id, OpenMode.ForRead) is not Dimension d) continue;
-            if (d.Layer != "ADIM" || !AdimMarker.IsMarked(d)) continue;
+            if (!AdimMarker.IsMarked(d)) continue;   // 标注在用户当前图层，按标记识别自产实体
             if (box.HasValue)
             {
                 try
