@@ -249,8 +249,8 @@ public sealed class Commands
                 ry1 = Math.Max(ry1, Math.Max(s.A.Y, s.B.Y));
             }
             double rawDiag = Math.Sqrt((rx1 - rx0) * (rx1 - rx0) + (ry1 - ry0) * (ry1 - ry0));
-            // 开放链闭合间距：用户固定值(ADIMCLN 第 6 项)>0 时用固定值，否则自动按对角线 0.02%
-            double linkGap = cp[5] > 0 ? cp[5] : Math.Max(0.5, rawDiag * 0.0002);
+            // 开放链闭合间距：用户固定值(ADIMCLN 第 6 项)>0 时用固定值，否则自动按对角线 0.025%
+            double linkGap = cp[5] > 0 ? cp[5] : Math.Max(0.5, rawDiag * 0.00025);
             var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4], linkGap);
             var res = ContourExtractor.Process(segs, circles, co);
             LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN");
