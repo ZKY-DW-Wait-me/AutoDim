@@ -180,6 +180,7 @@ public sealed class Commands
         catch { }
         bool autoClean = false;
         string cats = "";
+        string styleSrc = "";
         using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
         {
             autoClean = Cad.OptionsStore.ReadAutoClean(doc.Database, tr);
@@ -187,13 +188,15 @@ public sealed class Commands
             cats = $"Overall={((Config.DimCategory)c).HasFlag(Config.DimCategory.Overall)} " +
                    $"Segment={((Config.DimCategory)c).HasFlag(Config.DimCategory.Segment)} " +
                    $"Holes={((Config.DimCategory)c).HasFlag(Config.DimCategory.Holes)}";
+            styleSrc = Cad.OptionsStore.ReadUseCurrentStyle(doc.Database, tr) ? "当前模板" : "ADIM国标";
             tr.Commit();
         }
         ed.WriteMessage(
             $"\nAutoDim v{ver} (构建 {buildTime})\n" +
             $"  DLL: {path}\n" +
             $"  AutoCAD: {acadVer}\n" +
-            $"  自动清洗: {(autoClean ? "开" : "关")} / 类别: {cats}\n");
+            $"  自动清洗: {(autoClean ? "开" : "关")} / 类别: {cats}\n" +
+            $"  标注样式来源: {styleSrc}\n");
     }
 
     /// <summary>
@@ -608,8 +611,18 @@ public sealed class Commands
         {
             using Transaction tr = db.TransactionManager.StartTransaction();
             Extents3d? extBox = Cad.GeometryUtils.CombinedExtents(tr, ids);
-            ObjectId layerId = LayerHelper.EnsureLayer(db, tr, "ADIM", 1);  // 红色：标注
-            ObjectId dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
+              ObjectId layerId;
+              ObjectId dimStyleId;
+              if (Cad.OptionsStore.ReadUseCurrentStyle(db, tr))
+              {
+                  layerId = db.Clayer;    // 用户模板：当前图层
+                  dimStyleId = db.Dimstyle;   // 用户模板：当前标注样式
+              }
+              else
+              {
+                  layerId = LayerHelper.EnsureLayer(db, tr, "ADIM", 1);  // 红色：标注
+                  dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
+              }
             double baseGap = extBox != null ? GeometryUtils.AutoGap(extBox.Value) : 10.0;
 
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
@@ -660,14 +673,29 @@ public sealed class Commands
         ed.WriteMessage($"\n自动清洗开关: {(autoClean ? "开" : "关")} " +
                         "(开启后 AUTODIM/ADIMALL/ADIMWIN/ADIMSEL 先清洗再标注)");
 
+        bool useCur;
+        using (Transaction trS = db.TransactionManager.StartTransaction())
+        {
+            useCur = Cad.OptionsStore.ReadUseCurrentStyle(db, trS);
+            trS.Commit();
+        }
+        ed.WriteMessage($"\n标注样式来源: {(useCur ? "当前模板(当前标注样式+当前图层)" : "ADIM国标样式(插件默认)")} " +
+                        "(切到当前模板后完全跟随你调好的图纸模板)");
+
         var kw = new PromptKeywordOptions(
-            "\n设置 [总体(O)/分段(E)/孔圆(H)/全部(ALL)/清空(NONE)/清洗开关(C)]: ");
+            "\n设置 [总体(O)/分段(E)/孔圆(H)/全部(ALL)/清空(NONE)/清洗开关(C)/模板样式(T)]: ");
         kw.Keywords.Add("O"); kw.Keywords.Add("E"); kw.Keywords.Add("H");
-        kw.Keywords.Add("ALL"); kw.Keywords.Add("NONE"); kw.Keywords.Add("C");
+        kw.Keywords.Add("ALL"); kw.Keywords.Add("NONE"); kw.Keywords.Add("C"); kw.Keywords.Add("T");
         kw.AllowNone = true;
         var kr = ed.GetKeywords(kw);
         if (kr.Status == PromptStatus.OK)
         {
+            if (kr.StringResult == "T")
+            {
+                Cad.OptionsStore.WriteUseCurrentStyle(db, !useCur);
+                ed.WriteMessage($"\n标注样式来源已切换为: {(!useCur ? "当前模板" : "ADIM国标样式")}（持久化到本图）。\n");
+                return;
+            }
             if (kr.StringResult == "C")
             {
                 Cad.OptionsStore.WriteAutoClean(db, !autoClean);
@@ -981,9 +1009,20 @@ public sealed class Commands
                 opt.Categories = (DimCategory)cats;
             }
 
-            ObjectId layerId = LayerHelper.EnsureLayer(db, tr, opt.LayerName, 1);
-            // 专属标注样式 ADIM(文字/箭头/比例固化)，不碰用户全局变量
-            ObjectId dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
+              // 标注样式来源：默认插件 ADIM 国标样式(字体/箭头/比例固化，不碰用户全局变量)；
+              // ADIMCFG 切到"当前模板"后改用当前标注样式+当前图层，完全跟随用户模板。
+              ObjectId layerId;
+              ObjectId dimStyleId;
+              if (Cad.OptionsStore.ReadUseCurrentStyle(db, tr))
+              {
+                  layerId = db.Clayer;
+                  dimStyleId = db.Dimstyle;
+              }
+              else
+              {
+                  layerId = LayerHelper.EnsureLayer(db, tr, opt.LayerName, 1);
+                  dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
+              }
 
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);

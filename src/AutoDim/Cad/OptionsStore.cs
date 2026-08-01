@@ -11,6 +11,7 @@ internal static class OptionsStore
     private const string NodKey = "AutoDim_Options";
     private const string AutoCleanKey = "AutoDim_AutoClean";
     private const string CleanKey = "AutoDim_Clean";
+    private const string CurrentStyleKey = "AutoDim_UseCurrentStyle";
 
     /// <summary>读持久化的类别开关；没设过返回 All(默认全开)。</summary>
     public static int ReadCategories(Database db, Transaction tr)
@@ -73,6 +74,40 @@ internal static class OptionsStore
             var rec = new Xrecord();
             rec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int32, on ? 1 : 0));
             nod.SetAt(AutoCleanKey, rec);
+            tr.AddNewlyCreatedDBObject(rec, true);
+        }
+        tr.Commit();
+    }
+
+    /// <summary>读"标注样式来源"开关（默认 false=插件 ADIM 国标样式；
+    /// true=跟随当前图纸模板：当前标注样式+当前图层）。</summary>
+    public static bool ReadUseCurrentStyle(Database db, Transaction tr)
+    {
+        var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+        if (!nod.Contains(CurrentStyleKey)) return false;
+        if (tr.GetObject(nod.GetAt(CurrentStyleKey), OpenMode.ForRead) is not Xrecord rec) return false;
+        foreach (TypedValue tv in rec.Data)
+            if (tv.TypeCode == (int)DxfCode.Int32 && tv.Value is int i)
+                return i != 0;
+        return false;
+    }
+
+    /// <summary>写"标注样式来源"开关到 NOD。</summary>
+    public static void WriteUseCurrentStyle(Database db, bool on)
+    {
+        using Transaction tr = db.TransactionManager.StartTransaction();
+        var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+        if (nod.Contains(CurrentStyleKey))
+        {
+            var rec = (Xrecord)tr.GetObject(nod.GetAt(CurrentStyleKey), OpenMode.ForWrite);
+            rec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int32, on ? 1 : 0));
+        }
+        else
+        {
+            nod.UpgradeOpen();
+            var rec = new Xrecord();
+            rec.Data = new ResultBuffer(new TypedValue((int)DxfCode.Int32, on ? 1 : 0));
+            nod.SetAt(CurrentStyleKey, rec);
             tr.AddNewlyCreatedDBObject(rec, true);
         }
         tr.Commit();

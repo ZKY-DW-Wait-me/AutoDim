@@ -304,76 +304,19 @@ internal static class CircleDimensioner
         return true;
     }
 
-    /// <summary>国标直径注法：尺寸线过圆心且两端超出圆周，圆外两端各一个实心小箭头、
-    /// 箭头尖端指向圆心，文字写在尺寸线中间上方。尺寸线必须超出圆外(用户明确要求)，
-    /// AutoCAD 的 DiametricDimension 尺寸线不超出圆周，故用 Line+Solid+MText 自绘。</summary>
+    /// <summary>CAD 原生直径标注(DiametricDimension)：尺寸线过圆心、两端标准箭头在圆周，
+    /// 文字放得下时在尺寸线中间上方、放不下时自动外置到圆外(国标直径注法)。必须用
+    /// CAD 标注实体而非手绘 Line/Solid——箭头才是标准尺寸箭头。</summary>
     private static void AddDiameterDim(Database db, Transaction tr, BlockTableRecord space,
         Point3d center, double radius, string txt, ObjectId dimStyleId, ObjectId layerId)
     {
-        double defAsz = 2.5, txtH = 2.5;
-        ObjectId textStyleId = ObjectId.Null;
-        try
-        {
-            var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
-            defAsz = dst.Dimasz * dst.Dimscale;
-            txtH = dst.Dimtxt * dst.Dimscale;
-            textStyleId = dst.Dimtxsty;   // ADIM 样式的国标文字样式
-        }
-        catch { }
-        // 箭头随孔缩小(约 0.9×半径，下限 0.6 保证可见)，不超过默认标注箭头
-        double asz = System.Math.Clamp(radius * 0.9, 0.6, defAsz);
-        double over = asz;   // 尺寸线超出圆周的量 = 箭头长(箭尾在圆外)
-
-        // 尺寸线：过圆心、两端超出圆周
-        var p1 = new Point3d(center.X - radius - over, center.Y, 0);
-        var p2 = new Point3d(center.X + radius + over, center.Y, 0);
-        using var ln = new Line(p1, p2);
-        ln.SetDatabaseDefaults(db);
-        ln.LayerId = layerId;
-        space.AppendEntity(ln);
-        tr.AddNewlyCreatedDBObject(ln, true);
-        Cad.AdimMarker.Mark(db, tr, ln);
-
-        // 两端箭头：尖端在圆周、箭尾在圆外，箭头方向指向圆心
-        AddArrowHead(db, tr, space, new Point3d(center.X - radius, center.Y, 0),
-                     new Vector3d(1, 0, 0), asz, layerId);
-        AddArrowHead(db, tr, space, new Point3d(center.X + radius, center.Y, 0),
-                     new Vector3d(-1, 0, 0), asz, layerId);
-
-        // 文字：尺寸线中间上方(国标直径注法)
-        using var mt = new MText();
-        mt.SetDatabaseDefaults(db);
-        if (!textStyleId.IsNull)
-            mt.TextStyleId = textStyleId;
-        mt.Contents = txt.Replace("Ø", "%%c");
-        mt.TextHeight = txtH;
-        mt.Attachment = AttachmentPoint.MiddleCenter;
-        mt.LayerId = layerId;
-        mt.Location = new Point3d(center.X, center.Y + txtH * 0.6, 0);
-        space.AppendEntity(mt);
-        tr.AddNewlyCreatedDBObject(mt, true);
-        Cad.AdimMarker.Mark(db, tr, mt);
-    }
-
-    /// <summary>实心箭头：尖端在 tip(圆周)，箭尾在 dirOut 反方向 asz 处(圆外)，
-    /// 即箭头由外指向圆周/圆心。</summary>
-    private static void AddArrowHead(Database db, Transaction tr, BlockTableRecord space,
-        Point3d tip, Vector3d dirOut, double asz, ObjectId layerId)
-    {
-        var baseC = tip - dirOut * asz;                       // 箭尾基底中心(圆外)
-        var perp = new Vector3d(-dirOut.Y, dirOut.X, 0);      // 垂直方向
-        using var solid = new Solid();
-        solid.SetDatabaseDefaults(db);
-        solid.SetPointAt(0, new Point3d(baseC.X + perp.X * asz * 0.5,
-                                        baseC.Y + perp.Y * asz * 0.5, 0));
-        solid.SetPointAt(1, new Point3d(baseC.X - perp.X * asz * 0.5,
-                                        baseC.Y - perp.Y * asz * 0.5, 0));
-        solid.SetPointAt(2, tip);
-        solid.SetPointAt(3, tip);
-        solid.LayerId = layerId;
-        space.AppendEntity(solid);
-        tr.AddNewlyCreatedDBObject(solid, true);
-        Cad.AdimMarker.Mark(db, tr, solid);
+        // 水平直径线两端点(圆周)，尺寸线过圆心
+        var p1 = new Point3d(center.X - radius, center.Y, 0);
+        var p2 = new Point3d(center.X + radius, center.Y, 0);
+        using var dim = new DiametricDimension(p1, p2, 0.0, "", dimStyleId);
+        // 文字放不下(小孔)时允许外置到圆外——CAD 标准直径标注行为；放得下仍在中间上方
+        dim.Dimtix = false;
+        DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, txt);
     }
 
     /// <summary>相邻位置点间距是否全部 &gt;= MinChainGap（否则链文字互相压）。</summary>
