@@ -29,10 +29,10 @@ internal static class CircleDimensioner
 
         int dia = 0, pos = 0;
 
-        // —— 直径标注：重复直径合并为数量注记（GB 惯例 "N×Ød"）——
-        // 完整圆按 GB/T 4458.4 标直径 ⌀d，用"水平引出线注法"：从圆周引一条水平
-        // 引出线（箭头指向圆周），文字 ⌀d 写在引出线末端上方、水平横放。
-        // 小孔(文字比圆大)无法用"过圆心两端箭头+中间文字"的注法，引出线法是通用标准。
+        // —— 直径标注（GB 水平引出线注法，文字与标注一体）——
+        // 从圆周引一条水平引出线(箭头指向圆周)，文字写在引出线末端上方、水平横放。
+        // 单孔文字为 ⌀d；重复孔文字直接写 "N×Ød"(数量×直径)——不再另放独立注记，
+        // 否则文字离孔远、不知道对应哪个标注(用户反馈"完全分家")。
         // 同一直径(0.1mm 精度分桶)：桶内只有 1 个孔 -> 标 Ø；桶内 ≥2 个 ->
         // 代表孔标 Ø + MText 注记 "N×Ød"。
         double cx = 0, cy = 0;
@@ -49,59 +49,23 @@ internal static class CircleDimensioner
             list.Add(c);
         }
 
-        // 单例桶代表孔：自然方向角按最小夹角(90°)展开成扇形。
-        // 同一组多个不同直径孔(各 1 个)若都朝孔簇质心外侧引线，角度几乎平行，
-        // 文字会叠在一起(实测 Radial+Radial 撞车主力)，先在这里错开。
-        const double MinRepSep = 90.0 * System.Math.PI / 180.0;
-        var singles = new List<(Circle C, double A)>();
-        foreach (var kv in buckets)
-        {
-            if (kv.Value.Count != 1) continue;
-            var c = kv.Value[0];
-            var dv = c.Center - centroid;
-            double a = dv.Length > 1e-9
-                ? System.Math.Atan2(dv.Y, dv.X)
-                : System.Math.PI * 0.25;
-            singles.Add((c, a));
-        }
-        singles.Sort((x, y) => x.A.CompareTo(y.A));
-        for (int k = 1; k < singles.Count; k++)
-            if (singles[k].A - singles[k - 1].A < MinRepSep)
-                singles[k] = (singles[k].C, singles[k - 1].A + MinRepSep);
-        var repAngles = new Dictionary<Circle, double>();
-        foreach (var s in singles) repAngles[s.C] = s.A;
-
-        double txtH = ReadDimTextHeight(db, tr, dimStyleId);
-        int noteIdx = 0;
         foreach (var kv in buckets.OrderBy(kv => kv.Key))
         {
             var list = kv.Value;
             if (list.Count == 1)
             {
                 var c0 = list[0];
-                double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
-                string txt = "%%c" + FormatLen(c0.Radius * 2.0); // %%c = ⌀
+                string txt = "Ø" + FormatLen(c0.Radius * 2.0);
                 AddDiameterLeader(db, tr, space, c0.Center, c0.Radius, txt, dimStyleId, layerId, baseGap);
                 dia++;
             }
             else
             {
-                // 多孔桶：代表孔标一个 Ø(过圆心直径标注)，其余孔用 N×Ød 注记
-                // 表达数量——否则只有注记、孔看起来"漏标"
+                // 多孔桶：代表孔的引出线文字直接写 "N×Ød"（数量×直径，文字与标注一体）
                 var c0 = list[0];
-                double ang = repAngles.TryGetValue(c0, out var a0) ? a0 : 0.0;
-                string txt = "%%c" + FormatLen(c0.Radius * 2.0);
+                string txt = $"{list.Count}×Ø{FormatLen(c0.Radius * 2.0)}";
                 AddDiameterLeader(db, tr, space, c0.Center, c0.Radius, txt, dimStyleId, layerId, baseGap);
                 dia++;
-                if (ext == null) continue;
-                double bx = 0, by = 0;
-                foreach (var c in list) { bx += c.Center.X; by += c.Center.Y; }
-                bx /= list.Count; by /= list.Count;
-                double midY = (ext.Value.MinPoint.Y + ext.Value.MaxPoint.Y) * 0.5;
-                // 同一组多个直径注记上下错开 2×字高，避免叠压
-                double ny = by + (by < midY ? 1.8 : -1.8) * baseGap + noteIdx * 2.0 * txtH;
-                noteIdx++;
-                AddCountNote(db, tr, space, dimStyleId, layerId, new Point3d(bx, ny, 0), list.Count, list[0].Radius * 2.0);
             }
         }
 
@@ -225,17 +189,6 @@ internal static class CircleDimensioner
         return (dia, pos);
     }
 
-    /// <summary>读取 ADIM 样式实际文字高度(Dimtxt × Dimscale)。</summary>
-    private static double ReadDimTextHeight(Database db, Transaction tr, ObjectId dimStyleId)
-    {
-        try
-        {
-            var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
-            return dst.Dimtxt * dst.Dimscale;
-        }
-        catch { return 2.5; }
-    }
-
     /// <summary>国标"水平引出线"直径标注：从圆周引一条水平线(实心箭头指向圆周)，
     /// 文字 ⌀d 水平写在引出线末端上方。用 Line+Solid+MText 组合——小孔的文字比圆大，
     /// "过圆心两端箭头+中间文字"放不下，引出线法是通用标准注法。</summary>
@@ -280,24 +233,6 @@ internal static class CircleDimensioner
         mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{txt.Replace("%%c", "Ø")}}}";
         mt.TextHeight = txtH;
         mt.Location = new Point3d(pEnd.X, pEnd.Y + txtH * 0.6, 0);
-        mt.Attachment = AttachmentPoint.MiddleCenter;
-        mt.LayerId = layerId;
-        space.AppendEntity(mt);
-        tr.AddNewlyCreatedDBObject(mt, true);
-        Cad.AdimMarker.Mark(db, tr, mt);
-    }
-
-    /// <summary>MText 数量注记 "N×Ød"，文字高度跟随 ADIM 样式，中上位置居中。</summary>
-    private static void AddCountNote(Database db, Transaction tr, BlockTableRecord space,
-        ObjectId dimStyleId, ObjectId layerId, Point3d at, int n, double diameter)
-    {
-        double txtH = ReadDimTextHeight(db, tr, dimStyleId);
-        using var mt = new MText();
-        mt.SetDatabaseDefaults(db);
-        // 内联 Arial：×/Ø 是 Unicode 字符，图纸默认样式(txt.shx)不含这些字形会显示为问号
-        mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{n}×Ø{FormatLen(diameter)}}}";
-        mt.TextHeight = txtH;
-        mt.Location = at;
         mt.Attachment = AttachmentPoint.MiddleCenter;
         mt.LayerId = layerId;
         space.AppendEntity(mt);

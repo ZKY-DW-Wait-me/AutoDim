@@ -110,9 +110,9 @@ internal static class OutlineDimensioner
                 {
                     var rep = grp[0];
                     int j = (rep.I + 1) % n;
-                    AnnotateArc(db, tr, space, pl, rep.I, j, centroid, dimStyleId, layerId, baseGap, ext);
+                    AnnotateArc(db, tr, space, pl, rep.I, j, centroid, dimStyleId, layerId, baseGap, ext,
+                                $"{grp.Count}×");
                     arc++;
-                    AddRCountNote(db, tr, space, dimStyleId, layerId, grp, pl);
                 }
                 else
                 {
@@ -204,40 +204,6 @@ internal static class OutlineDimensioner
         DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, text);
     }
 
-    /// <summary>同半径圆角数量注记 "N×R"（内联 Arial，防 txt.shx 缺字形）。</summary>
-    private static void AddRCountNote(Database db, Transaction tr, BlockTableRecord space,
-        ObjectId dimStyleId, ObjectId layerId, List<(int I, double R, Point2d C)> grp, Polyline pl)
-    {
-        // 组内弧中点平均作为注记位置
-        double bx = 0, by = 0;
-        foreach (var (i, r, c) in grp)
-        {
-            var seg = pl.GetArcSegment2dAt(i);
-            double mid = (seg.StartAngle + seg.EndAngle) * 0.5;
-            bx += c.X + r * System.Math.Cos(mid);
-            by += c.Y + r * System.Math.Sin(mid);
-        }
-        bx /= grp.Count; by /= grp.Count;
-        double txtH = 2.5;
-        try
-        {
-            var dst = (DimStyleTableRecord)tr.GetObject(dimStyleId, OpenMode.ForRead);
-            txtH = dst.Dimtxt * dst.Dimscale;
-        }
-        catch { }
-        using var mt = new MText();
-        mt.SetDatabaseDefaults(db);
-        // 与 R 引线标注一致：四舍五入到 0.1 后去尾零(如 R1.008 标 R1，注记也写 4×R1)
-        mt.Contents = $"{{\\fArial|b0|i0|c0|p2;{grp.Count}×R{FormatLen(System.Math.Round(grp[0].R, 1))}}}";
-        mt.TextHeight = txtH;
-        mt.Location = new Point3d(bx, by, 0);
-        mt.Attachment = AttachmentPoint.MiddleCenter;
-        mt.LayerId = layerId;
-        space.AppendEntity(mt);
-        tr.AddNewlyCreatedDBObject(mt, true);
-        Cad.AdimMarker.Mark(db, tr, mt);
-    }
-
     /// <summary>斜边的单一主投影 RotatedDimension(模式 A')：
     /// 浅斜边(dx≥dy)标水平投影(1.0×baseGap)、陡斜边标垂直投影(2.0×baseGap)，
     /// 保持原双投影时代的排布距离，避免靠近轮廓与分段/径向标注互压。
@@ -282,7 +248,7 @@ internal static class OutlineDimensioner
 
     private static void AnnotateArc(Database db, Transaction tr, BlockTableRecord space,
         Polyline pl, int i, int j, Point2d centroid, ObjectId dimStyleId, ObjectId layerId, double baseGap,
-        Extents3d? ext = null)
+        Extents3d? ext = null, string? countPrefix = null)
     {
         var arcSeg = pl.GetArcSegment2dAt(i);
         Point2d c2 = arcSeg.Center;
@@ -302,9 +268,9 @@ internal static class OutlineDimensioner
 
         // 引线长度：外延一段，文字坐在末端(GB 圆角标注：圆心->弧中点->外延引线->R文字)。
         double leader = System.Math.Max(baseGap * 0.6, r * 0.4);
-        // 圆弧半径按名义值显示(四舍五入到 0.1，去尾零)：R6.008 标成 R6 而非 R6.01，
-        // 更接近人工标注习惯(公差另注)
-        string txt = "R" + FormatLen(System.Math.Round(r, 1));
+        // 圆弧半径按名义值显示(四舍五入到 0.1，去尾零)：R6.008 标成 R6 而非 R6.01；
+        // 同半径圆角(≥3 个)代表弧的文字带数量前缀 "4×R1.5"，文字与引线一体
+        string txt = (countPrefix ?? "") + "R" + FormatLen(System.Math.Round(r, 1));
         var dim = new RadialDimension(center, chord, leader, txt, dimStyleId);
         DimUtil.Append(db, tr, space, dim, dimStyleId, layerId);
 
