@@ -98,14 +98,22 @@ python test/render_dxf.py test/test_annotated.dxf out_zoom.png 5800,150,6100,400
 
 ```text
 输入线段(含块展开)  8975
-清洗后              6298
+清洗后              6691
 闭合面(含圆弧bulge) 579（共线误并修复 +193、LinkGap 0.025% 再闭合 +25）
 去重圆              447
 特征组              125
 自动标注总量        落地 297 个尺寸 + 64 个 N×Ød 注记（生成 312、去重 15）
 ADIM 文字撞车对数   0（真实文字外接框相交，可读性指标）
-无界面运行耗时      约 17s
+无界面运行耗时      约 15s
 ```
+
+标注效果（黑色=几何，红色=AutoDim 尺寸与 N×Ød 注记）：
+
+![test.dwg 自动标注整图](picture/test_dwg_annotated.png)
+
+![弹簧支撑区域局部](picture/test_dwg_zoom_spring.png)
+
+![板类特征区域局部](picture/test_dwg_zoom_plate.png)
 
 布局质量改进（2026-08）：
 
