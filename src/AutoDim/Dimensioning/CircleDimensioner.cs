@@ -332,7 +332,26 @@ internal static class CircleDimensioner
         double slope = System.Math.Clamp(asz * 2.2, 1.5, System.Math.Max(1.5, radius * 2.0));
         var pCirc = new Point3d(center.X + dir * radius, center.Y, 0);              // 箭头尖端(圆周)
         var pBend = new Point3d(pCirc.X + dir * slope, pCirc.Y + slope, 0);         // 折点(斜线转水平)
-        double textW = System.Math.Max(10.0, 0.7 * txtH * txt.Length);              // 文字区宽度
+
+        // 文字：先以临时位置创建并读实际渲染宽度，水平线长度按"文字宽+两端余量"自适应，
+        // 不再用 0.7×高×字符数的粗略估算(实际 SHX 字形宽度与估算偏差大，线过长或过短)
+        using var mt = new MText();
+        mt.SetDatabaseDefaults(db);
+        if (!textStyleId.IsNull)
+            mt.TextStyleId = textStyleId;
+        mt.Contents = txt.Replace("Ø", "%%c");
+        mt.TextHeight = txtH;
+        mt.Attachment = AttachmentPoint.MiddleCenter;
+        mt.LayerId = layerId;
+        mt.Location = center;   // 临时位置，仅用于读渲染宽度
+        double textW = System.Math.Max(8.0, 0.7 * txtH * txt.Length);              // 回退估算
+        try
+        {
+            var ge = mt.GeometricExtents;
+            double w = ge.MaxPoint.X - ge.MinPoint.X;
+            if (w > 0.5) textW = w + System.Math.Max(1.0, txtH * 0.8);              // 两端各留 ~1mm
+        }
+        catch { }
         var pEnd = new Point3d(pBend.X + dir * textW, pBend.Y, 0);                  // 水平线末端
 
         // 实心箭头：尖端在圆周，沿斜线方向指向圆心
@@ -366,17 +385,8 @@ internal static class CircleDimensioner
         tr.AddNewlyCreatedDBObject(ln, true);
         Cad.AdimMarker.Mark(db, tr, ln);
 
-        // 文字：水平线段上方居中、水平。用 ADIM 的国标文字样式(gbeitc.shx+gbcbig.shx)，
-        // 与其他所有标注字体统一；直径符号用 %%c(SHX 标准转义)，× 由 gbcbig 大字体渲染。
-        using var mt = new MText();
-        mt.SetDatabaseDefaults(db);
-        if (!textStyleId.IsNull)
-        mt.TextStyleId = textStyleId;
-        mt.Contents = txt.Replace("Ø", "%%c");
-        mt.TextHeight = txtH;
+        // 文字：水平线段上方居中、水平(位置在上一步定好的水平线上方)
         mt.Location = new Point3d(pBend.X + dir * textW * 0.5, pBend.Y + txtH * 0.6, 0);
-        mt.Attachment = AttachmentPoint.MiddleCenter;
-        mt.LayerId = layerId;
         space.AppendEntity(mt);
         tr.AddNewlyCreatedDBObject(mt, true);
         Cad.AdimMarker.Mark(db, tr, mt);
