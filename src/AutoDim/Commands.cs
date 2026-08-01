@@ -256,7 +256,7 @@ public sealed class Commands
             // ADIMCLN 调紧(SnapTol=0.5 等)。
             var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4], linkGap);
             var res = ContourExtractor.Process(segs, circles, co);
-            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN");
+            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN", 8);   // 灰色：清洗结果低调显示
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
@@ -299,7 +299,7 @@ public sealed class Commands
                     var b = f.Points[(i + 1) % f.Points.Length];
                     faceKeys.Add(a.X < b.X || (a.X == b.X && a.Y <= b.Y) ? (a, b) : (b, a));
                 }
-            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN_L");
+            LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN_L", 9); // 浅灰：开放链碎片
             int open = 0;
             foreach (var s in res.CleanedSegments)
             {
@@ -538,7 +538,7 @@ public sealed class Commands
         {
             using Transaction tr = db.TransactionManager.StartTransaction();
             Extents3d? extBox = Cad.GeometryUtils.CombinedExtents(tr, ids);
-            ObjectId layerId = LayerHelper.EnsureLayer(db, tr, "ADIM");
+            ObjectId layerId = LayerHelper.EnsureLayer(db, tr, "ADIM", 1);  // 红色：标注
             ObjectId dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
             double baseGap = extBox != null ? GeometryUtils.AutoGap(extBox.Value) : 10.0;
 
@@ -911,7 +911,7 @@ public sealed class Commands
                 opt.Categories = (DimCategory)cats;
             }
 
-            ObjectId layerId = LayerHelper.EnsureLayer(db, tr, opt.LayerName);
+            ObjectId layerId = LayerHelper.EnsureLayer(db, tr, opt.LayerName, 1);
             // 专属标注样式 ADIM(文字/箭头/比例固化)，不碰用户全局变量
             ObjectId dimStyleId = Cad.DimStyleSetup.EnsureStyle(db, tr, extBox);
 

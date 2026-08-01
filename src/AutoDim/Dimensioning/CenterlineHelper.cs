@@ -38,13 +38,7 @@ internal static class CenterlineHelper
 
     private static ObjectId EnsureLayer(Database db, Transaction tr)
     {
-        var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-        if (lt.Has(CenterLayer)) return lt[CenterLayer];
-        lt.UpgradeOpen();
-        var rec = new LayerTableRecord { Name = CenterLayer, Color = Color.FromColorIndex(ColorMethod.ByAci, 1) };
-        ObjectId id = lt.Add(rec);
-        tr.AddNewlyCreatedDBObject(rec, true);
-        return id;
+        return Cad.LayerHelper.EnsureLayer(db, tr, CenterLayer, 2);   // 黄色：中心线
     }
 
     /// <summary>确保 CENTER 线型已加载到当前图纸，返回其 ObjectId。</summary>
