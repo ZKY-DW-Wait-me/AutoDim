@@ -97,4 +97,29 @@ tot2="$(echo "$CLEAN2" | sed -n 's/.*落地 \([0-9][0-9]*\) 个尺寸.*/\1/p' | 
 tot2="$(echo "$CLEAN2" | sed -n 's/.*landed=\([0-9][0-9]*\).*/\1/p' | head -n1)"
 { [ -n "$tot2" ] && [ "$tot2" -gt 0 ]; } || { echo "FAIL: 第二张图标注数为 0"; fail=1; }
 
+echo "== 6) 干净 CAD 图泛化(test2.dwg，SW 导出) =="
+if [ -f "$ROOT/test2.DWG" ]; then
+    SCR3="$ROOT/test/run-headless.test2.scr"
+    cat > "$SCR3" <<EOF
+SECURELOAD
+0
+NETLOAD
+$DLL_WIN
+ADIMCLEAN
+EOF
+    LOG3="$ROOT/test/test2-run.log"
+    "$POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" \
+        -InputDwg "$(cygpath -w "$ROOT/test2.DWG")" -Script "$(cygpath -w "$SCR3")" \
+        -Log "$(cygpath -w "$LOG3")" -TimeoutSec 90
+    rm -f "$SCR3"
+    CLEAN3="$(tr -d '\000' < "$LOG3")"
+    echo "$CLEAN3" | grep -q "ADIMCLEAN:" || { echo "FAIL: test2 未执行清洗"; fail=1; }
+    t3="$(echo "$CLEAN3" | sed -n 's/.*landed=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    { [ -n "$t3" ] && [ "$t3" -gt 0 ]; } || { echo "FAIL: test2 标注数为 0"; fail=1; }
+    th3="$(echo "$CLEAN3" | sed -n 's/.*textHits=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    { [ -n "$th3" ] && [ "$th3" -le 2 ]; } || { echo "FAIL: test2 文字撞车过多($th3)"; fail=1; }
+else
+    echo "SKIP: 未找到 test2.DWG"
+fi
+
 if [ "$fail" = "0" ]; then echo "== PASS =="; exit 0; else echo "== TESTS FAILED =="; exit 1; fi
