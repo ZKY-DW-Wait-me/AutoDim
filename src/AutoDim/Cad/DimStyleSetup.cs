@@ -42,8 +42,8 @@ internal static class DimStyleSetup
         return id;
     }
 
-    /// <summary>创建/复用 ADIM 专用文字样式：国标字体 gbeitc.shx(西文)+gbcbig.shx(中文)，
-    /// 避免默认 Standard/txt.shx 显示 ⌀/汉字走样。</summary>
+    /// <summary>创建/复用 ADIM 专用文字样式：Arial(TTF)——与圆直径引出线 MText 的内联
+    /// Arial 字体一致，避免"圆标注文字和其他标注字体不一样"的不协调；Arial 自带 ⌀/×/汉字。</summary>
     private static ObjectId EnsureTextStyle(Database db, Transaction tr)
     {
         const string styleName = "AutoDimText";
@@ -54,8 +54,7 @@ internal static class DimStyleSetup
         var rec = new TextStyleTableRecord
         {
             Name = styleName,
-            FileName = "gbeitc.shx",
-            BigFontFileName = "gbcbig.shx",
+            FileName = "arial.ttf",
         };
         ObjectId id = tst.Add(rec);
         tr.AddNewlyCreatedDBObject(rec, true);
@@ -97,9 +96,7 @@ internal static class DimStyleSetup
         {
             edges.Sort();
             double med = edges[edges.Count / 2];
-            // 字高下限：国标标注文字不小于 2.5mm(Dimtxt=2.5 × scale)，scale 最小 1.0——
-            // 否则小零件比例被压到 0.5，字高仅 1.25mm，"1/7" 等数字难以分辨
-            return System.Math.Clamp(med / 100.0, 1.0, 3.0);
+            return System.Math.Clamp(med / 100.0, 0.5, 3.0);
         }
         if (ext != null)
         {
@@ -107,7 +104,7 @@ internal static class DimStyleSetup
             double h = ext.Value.MaxPoint.Y - ext.Value.MinPoint.Y;
             double maxEdge = System.Math.Max(w, h);
             if (maxEdge > 1e-6)
-                return System.Math.Clamp(maxEdge / 100.0, 1.0, 3.0);
+                return System.Math.Clamp(maxEdge / 100.0, 0.5, 3.0);
         }
         return 1.0;
     }
