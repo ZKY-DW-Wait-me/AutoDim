@@ -79,17 +79,44 @@ internal static class OptionsStore
         tr.Commit();
     }
 
-    /// <summary>读"标注样式来源"开关（默认 false=插件 ADIM 国标样式；
-    /// true=跟随当前图纸模板：当前标注样式+当前图层）。</summary>
+    /// <summary>读"标注样式来源"开关。显式设置过(T 切换)则尊重设置；
+    /// 未设置时智能判断：当前标注样式用了中文字体/大字体(用户 DWT 样板调过的痕迹)
+    /// 就跟随当前模板(当前标注样式+当前图层)，纯默认样式(txt.shx 无大字体)才用插件
+    /// ADIM 国标样式兜底——保证"样板设置什么，插件标注就用什么"。</summary>
     public static bool ReadUseCurrentStyle(Database db, Transaction tr)
     {
         var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-        if (!nod.Contains(CurrentStyleKey)) return false;
-        if (tr.GetObject(nod.GetAt(CurrentStyleKey), OpenMode.ForRead) is not Xrecord rec) return false;
-        foreach (TypedValue tv in rec.Data)
-            if (tv.TypeCode == (int)DxfCode.Int32 && tv.Value is int i)
-                return i != 0;
-        return false;
+        if (nod.Contains(CurrentStyleKey))
+        {
+            if (tr.GetObject(nod.GetAt(CurrentStyleKey), OpenMode.ForRead) is Xrecord rec)
+                foreach (TypedValue tv in rec.Data)
+                    if (tv.TypeCode == (int)DxfCode.Int32 && tv.Value is int i)
+                        return i != 0;
+            return false;
+        }
+        return IsTemplateStyle(db, tr);
+    }
+
+    /// <summary>当前标注样式的文字字体是否像"用户调过的模板"：
+    /// 带大字体(gbcbig 等中文大字体)或中文字体(仿宋/宋体/gb 系列)即视为模板。</summary>
+    private static bool IsTemplateStyle(Database db, Transaction tr)
+    {
+        try
+        {
+            var dst = (DimStyleTable)tr.GetObject(db.DimStyleTableId, OpenMode.ForRead);
+            if (!dst.Has(db.Dimstyle)) return false;
+            var rec = (DimStyleTableRecord)tr.GetObject(db.Dimstyle, OpenMode.ForRead);
+            if (rec.Dimtxsty.IsNull) return false;
+            var tst = (TextStyleTable)tr.GetObject(db.TextStyleTableId, OpenMode.ForRead);
+            var ts = (TextStyleTableRecord)tr.GetObject(rec.Dimtxsty, OpenMode.ForRead);
+            string f = (ts.FileName ?? "").ToLower();
+            string bf = (ts.BigFontFileName ?? "").ToLower();
+            bool hasBig = !string.IsNullOrEmpty(bf);
+            bool isCjk = f.Contains("simsun") || f.Contains("仿宋") || f.Contains("宋体") ||
+                         f.Contains("gb") || bf.Contains("gb");
+            return hasBig || isCjk;
+        }
+        catch { return false; }
     }
 
     /// <summary>写"标注样式来源"开关到 NOD。</summary>
