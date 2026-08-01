@@ -82,7 +82,8 @@ internal static class OptionsStore
     /// LinkGap=0 表示自动(按包围盒对角线 0.02%)。没设过返回默认。</summary>
     public static double[] ReadCleanParams(Database db, Transaction tr)
     {
-        var def = new[] { 0.5, 1.0, 3.0, 1.0, 60.0, 0.0 };
+        // 默认面向 CAD 导出干净图：高精度吸附/合并、不过滤小特征；扫描件用 ADIMCLN 调紧
+        var def = new[] { 0.01, 0.05, 0.5, 0.01, 60.0, 0.0 };
         var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
         if (!nod.Contains(CleanKey)) return def;
         if (tr.GetObject(nod.GetAt(CleanKey), OpenMode.ForRead) is not Xrecord rec) return def;

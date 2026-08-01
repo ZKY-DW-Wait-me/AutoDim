@@ -251,6 +251,9 @@ public sealed class Commands
             double rawDiag = Math.Sqrt((rx1 - rx0) * (rx1 - rx0) + (ry1 - ry0) * (ry1 - ry0));
             // 开放链闭合间距：用户固定值(ADIMCLN 第 6 项)>0 时用固定值，否则自动按对角线 0.025%
             double linkGap = cp[5] > 0 ? cp[5] : Math.Max(0.5, rawDiag * 0.00025);
+            // 默认参数面向"CAD 导出的干净工程图"(用户实际输入)：高精度吸附(0.01)、
+            // 不网格化取整、不过滤小特征——SW 精确坐标原样保留。扫描碎片图用户用
+            // ADIMCLN 调紧(SnapTol=0.5 等)。
             var co = new CleanOptions(cp[0], cp[1], 0.5, 0.05, cp[2], cp[3], cp[4], linkGap);
             var res = ContourExtractor.Process(segs, circles, co);
             LayerHelper.EnsureLayer(db, tr, "ADIM_CLEAN");
