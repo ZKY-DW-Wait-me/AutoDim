@@ -27,7 +27,7 @@ public sealed class PluginInit : IExtensionApplication
         Document? doc = AcApp.DocumentManager.MdiActiveDocument;
         doc?.Editor.WriteMessage(
             "\nAutoDim 已加载。命令: AUTODIM / ADIMALL / ADIMWIN / ADIMSEL / ADIMSAMPLE / " +
-            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN / ADIMDUMP\n");
+            "ADIMCOORD / ADIMSCALE / ADIMCFG / ADIMDEBUG / ADIMCLEAN / ADIMCLN / ADIMDUMP / ADIMVER\n");
     }
 
     public void Terminate() { }
@@ -153,6 +153,47 @@ public sealed class Commands
             Cad.DimStyleSetup.SetUserScale(db, pr.Value);
             ed.WriteMessage($"\n已固定 Dimscale = {pr.Value}。后续 ADIM*/ADIMCOORD 标注将用此值。\n");
         }
+    }
+
+    /// <summary>查看当前加载的插件版本与状态：DLL 路径/构建时间/AutoCAD 版本/配置开关，
+    /// 用于判断 AutoCAD 里加载的是不是最新构建。</summary>
+    [CommandMethod("ADIMVER", CommandFlags.Modal)]
+    public void AdimVer()
+    {
+        Document? doc = AcApp.DocumentManager.MdiActiveDocument;
+        if (doc == null) return;
+        Editor ed = doc.Editor;
+        var asm = System.Reflection.Assembly.GetExecutingAssembly();
+        var ver = asm.GetName().Version;
+        string path = "";
+        string buildTime = "";
+        try
+        {
+            path = asm.Location;
+            var fi = new System.IO.FileInfo(path);
+            if (fi.Exists)
+                buildTime = fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
+        }
+        catch { }
+        string acadVer = "";
+        try { acadVer = AcApp.GetSystemVariable("ACADVER")?.ToString() ?? ""; }
+        catch { }
+        bool autoClean = false;
+        string cats = "";
+        using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+        {
+            autoClean = Cad.OptionsStore.ReadAutoClean(doc.Database, tr);
+            int c = Cad.OptionsStore.ReadCategories(doc.Database, tr);
+            cats = $"Overall={((Config.DimCategory)c).HasFlag(Config.DimCategory.Overall)} " +
+                   $"Segment={((Config.DimCategory)c).HasFlag(Config.DimCategory.Segment)} " +
+                   $"Holes={((Config.DimCategory)c).HasFlag(Config.DimCategory.Holes)}";
+            tr.Commit();
+        }
+        ed.WriteMessage(
+            $"\nAutoDim v{ver} (构建 {buildTime})\n" +
+            $"  DLL: {path}\n" +
+            $"  AutoCAD: {acadVer}\n" +
+            $"  自动清洗: {(autoClean ? "开" : "关")} / 类别: {cats}\n");
     }
 
     /// <summary>

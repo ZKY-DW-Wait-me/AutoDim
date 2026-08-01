@@ -23,6 +23,7 @@
 
     <AssemblyName>AutoDim</AssemblyName>
     <RootNamespace>AutoDim</RootNamespace>
+    <Version>0.1.0</Version>
 
     <!-- AutoCAD 2025 安装目录。
          默认使用 D:\Program Files\AutoCAD 2025\；其他机器可通过环境变量
