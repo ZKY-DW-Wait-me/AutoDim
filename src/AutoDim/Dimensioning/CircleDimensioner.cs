@@ -142,16 +142,39 @@ internal static class CircleDimensioner
             xPts.AddRange(holeXs);
             xPts.Add(rightX);
             double xDimY = bottomY - posOff;
-            for (int i = 0; i < xPts.Count - 1; i++)
+            // 等距阵列合并：连续 ≥3 段等间距(如 5 个孔 4 段 20)合并为 1 段，文字 "4×20"，
+            // 避免重复标一排相同的间距(GB 阵列注法)
+            var xPlan = new List<(int I, int J, string? Text)>();
+            int k = 0;
+            while (k < xPts.Count - 1)
             {
-                double a = xPts[i], b = xPts[i + 1];
+                double d0 = xPts[k + 1] - xPts[k];
+                int run = 1;
+                while (k + run < xPts.Count - 1 &&
+                       System.Math.Abs((xPts[k + run + 1] - xPts[k + run]) - d0) < 1e-3)
+                    run++;
+                if (run >= 3)
+                {
+                    xPlan.Add((k, k + run, $"{run}×{FormatLen(d0)}"));
+                    k += run;
+                }
+                else
+                {
+                    xPlan.Add((k, k + 1, null));
+                    k++;
+                }
+            }
+            foreach (var (i, j, text) in xPlan)
+            {
+                double a = xPts[i], b = xPts[j];
                 if (b - a <= System.Math.Max(tol, MinChainSeg)) continue;
-                // 首段基准=左下角(minX,bottomY)；末段终点=右下角(maxX,bottomY)；中间端点=圆心
+                // 首段基准=左下角(minX,bottomY)；跨到末端的合并段终点=右下角(maxX,bottomY)；
+                // 中间端点=圆心(xPts 中间点必是孔 X；末端 maxX 不在 xToY 表，查表会崩)
                 Point3d p1 = i == 0 ? new Point3d(a, bottomY, 0) : new Point3d(a, xToY[a], 0);
-                Point3d p2 = i == xPts.Count - 2 ? new Point3d(b, bottomY, 0) : new Point3d(b, xToY[b], 0);
+                Point3d p2 = j >= xPts.Count - 1 ? new Point3d(b, bottomY, 0) : new Point3d(b, xToY[b], 0);
                 var dl = new Point3d((a + b) * 0.5, xDimY, 0);
                 var dim = new RotatedDimension(0.0, p1, p2, dl, "", dimStyleId);
-                DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, FormatLen(b - a));
+                DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, text ?? FormatLen(b - a));
                 pos++;
             }
         }
@@ -171,15 +194,35 @@ internal static class CircleDimensioner
             yPts.AddRange(holeYs);
             yPts.Add(topY);
             double yDimX = leftX - posOff;
-            for (int i = 0; i < yPts.Count - 1; i++)
+            var yPlan = new List<(int I, int J, string? Text)>();
+            int yk = 0;
+            while (yk < yPts.Count - 1)
             {
-                double a = yPts[i], b = yPts[i + 1];
+                double d0 = yPts[yk + 1] - yPts[yk];
+                int run = 1;
+                while (yk + run < yPts.Count - 1 &&
+                       System.Math.Abs((yPts[yk + run + 1] - yPts[yk + run]) - d0) < 1e-3)
+                    run++;
+                if (run >= 3)
+                {
+                    yPlan.Add((yk, yk + run, $"{run}×{FormatLen(d0)}"));
+                    yk += run;
+                }
+                else
+                {
+                    yPlan.Add((yk, yk + 1, null));
+                    yk++;
+                }
+            }
+            foreach (var (i, j, text) in yPlan)
+            {
+                double a = yPts[i], b = yPts[j];
                 if (b - a <= System.Math.Max(tol, MinChainSeg)) continue;
                 Point3d p1 = i == 0 ? new Point3d(leftX, a, 0) : new Point3d(yToX[a], a, 0);
-                Point3d p2 = i == yPts.Count - 2 ? new Point3d(leftX, b, 0) : new Point3d(yToX[b], b, 0);
+                Point3d p2 = j >= yPts.Count - 1 ? new Point3d(leftX, b, 0) : new Point3d(yToX[b], b, 0);
                 var dl = new Point3d(yDimX, (a + b) * 0.5, 0);
                 var dim = new RotatedDimension(System.Math.PI * 0.5, p1, p2, dl, "", dimStyleId);
-                DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, FormatLen(b - a));
+                DimUtil.Append(db, tr, space, dim, dimStyleId, layerId, text ?? FormatLen(b - a));
                 pos++;
             }
         }
