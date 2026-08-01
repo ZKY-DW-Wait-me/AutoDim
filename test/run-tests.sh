@@ -63,13 +63,15 @@ CLEAN="$(tr -d '\000' < "$LOG")"
 # 管道被判失败(日志变大后必现)；-c 读完整个输入。
 [ "$(echo "$CLEAN" | grep -c 'ADIMVER')" -gt 0 ] || { echo "FAIL: 插件未加载"; fail=1; }
 [ "$(echo "$CLEAN" | grep -c 'AUTODIM:')" -gt 0 ]    || { echo "FAIL: 未执行整图标注"; fail=1; }
-[ "$(echo "$CLEAN" | grep -c 'ADIMCLEAN:')" -gt 0 ]  || { echo "FAIL: 未执行图纸清洗"; fail=1; }
+# ADIMCLEAN 已改为直接对原图实体标注（不再清洗/画副本），必须产生 AUTODIM 统计行；
+# 且旧清洗管线的统计行(ADIMCLEAN:)必须绝迹——出现即意味着又在重建几何/造假。
+[ "$(echo "$CLEAN" | grep -c 'ADIMCLEAN:')" -eq 0 ]  || { echo "FAIL: 旧清洗管线仍然存在"; fail=1; }
 # 断言至少生成了标注（具体数量随 Phase 2~5 的类别组合变化，不做硬编码）
 tot="$(echo "$CLEAN" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
 { [ -n "$tot" ] && [ "$tot" -gt 0 ]; } || { echo "FAIL: total 标注数量为 0"; fail=1; }
-# 幂等断言：连续两次 ADIMCLEAN 的统计行必须完全一致（组级清场修复的回归保护）
-CL1="$(echo "$CLEAN" | grep "ADIMCLEAN:" | tail -2 | head -1)"
-CL2="$(echo "$CLEAN" | grep "ADIMCLEAN:" | tail -1)"
+# 幂等断言：连续两次 ADIMCLEAN(直接标注)的统计行必须完全一致（清场去重的回归保护）
+CL1="$(echo "$CLEAN" | grep "AUTODIM:" | tail -2 | head -1)"
+CL2="$(echo "$CLEAN" | grep "AUTODIM:" | tail -1)"
 [ -n "$CL1" ] && [ "$CL1" = "$CL2" ] || { echo "FAIL: 重复运行 ADIMCLEAN 结果不一致(非幂等)"; fail=1; }
 
 echo "== 5) 第二张图泛化(合成 extra.dxf) =="
@@ -89,11 +91,8 @@ LOG2="$ROOT/test/extra-run.log"
     -Log "$(cygpath -w "$LOG2")" -TimeoutSec 90
 rm -f "$SCR2"
 CLEAN2="$(tr -d '\000' < "$LOG2")"
-echo "$CLEAN2" | grep -q "ADIMCLEAN:" || { echo "FAIL: 第二张图未执行清洗"; fail=1; }
-f2="$(echo "$CLEAN2" | sed -n 's/.*faces=\([0-9][0-9]*\).*/\1/p' | head -n1)"
-{ [ -n "$f2" ] && [ "$f2" -ge 3 ]; } || { echo "FAIL: 第二张图闭合面过少($f2)"; fail=1; }
-tot2="$(echo "$CLEAN2" | sed -n 's/.*落地 \([0-9][0-9]*\) 个尺寸.*/\1/p' | head -n1)"
-tot2="$(echo "$CLEAN2" | sed -n 's/.*landed=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+echo "$CLEAN2" | grep -q "AUTODIM:" || { echo "FAIL: 第二张图未直接标注"; fail=1; }
+tot2="$(echo "$CLEAN2" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
 { [ -n "$tot2" ] && [ "$tot2" -gt 0 ]; } || { echo "FAIL: 第二张图标注数为 0"; fail=1; }
 
 echo "== 6) 干净 CAD 图泛化(test2.dwg，SW 导出) =="
@@ -112,11 +111,9 @@ EOF
         -Log "$(cygpath -w "$LOG3")" -TimeoutSec 90
     rm -f "$SCR3"
     CLEAN3="$(tr -d '\000' < "$LOG3")"
-    echo "$CLEAN3" | grep -q "ADIMCLEAN:" || { echo "FAIL: test2 未执行清洗"; fail=1; }
-    t3="$(echo "$CLEAN3" | sed -n 's/.*landed=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    echo "$CLEAN3" | grep -q "AUTODIM:" || { echo "FAIL: test2 未直接标注"; fail=1; }
+    t3="$(echo "$CLEAN3" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
     { [ -n "$t3" ] && [ "$t3" -gt 0 ]; } || { echo "FAIL: test2 标注数为 0"; fail=1; }
-    th3="$(echo "$CLEAN3" | sed -n 's/.*textHits=\([0-9][0-9]*\).*/\1/p' | head -n1)"
-    { [ -n "$th3" ] && [ "$th3" -le 2 ]; } || { echo "FAIL: test2 文字撞车过多($th3)"; fail=1; }
 else
     echo "SKIP: 未找到 test2.DWG"
 fi
@@ -137,8 +134,8 @@ EOF
         -Log "$(cygpath -w "$LOG4")" -TimeoutSec 90
     rm -f "$SCR4"
     CLEAN4="$(tr -d '\000' < "$LOG4")"
-    echo "$CLEAN4" | grep -q "ADIMCLEAN:" || { echo "FAIL: test3 未执行清洗"; fail=1; }
-    t4="$(echo "$CLEAN4" | sed -n 's/.*landed=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    echo "$CLEAN4" | grep -q "AUTODIM:" || { echo "FAIL: test3 未直接标注"; fail=1; }
+    t4="$(echo "$CLEAN4" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p' | head -n1)"
     { [ -n "$t4" ] && [ "$t4" -gt 0 ]; } || { echo "FAIL: test3 标注数为 0"; fail=1; }
 else
     echo "SKIP: 未找到 test3.DWG"
