@@ -443,11 +443,12 @@ public sealed class Commands
                 }
                 if (removedDup > 0 || movedAway > 0)
                     ed.WriteMessage($"    -> 布局收尾: 去重 {removedDup} 个 / 外推避让 {movedAway} 次\n");
+                var (finalDims, finalNotes) = CountAdimEntities(db);
                 var (overlaps, overlapTop) = CountDimOverlaps(db);
                 var (textHits, textTop) = CountDimTextOverlaps(db);
                 ed.WriteMessage(
-                    $"    -> 合计: {dimmedGroups} 组 / {sumDims} 个标注 / " +
-                    $"ADIM 文字撞车 {textHits} 对 [AABB 重叠 {overlaps}] [{overlapTop}]\n");
+                    $"    -> 合计: {dimmedGroups} 组 / 生成 {sumDims} 个尺寸、落地 {finalDims} 个尺寸 " +
+                    $"+ {finalNotes} 个注记 / ADIM 文字撞车 {textHits} 对 [AABB 重叠 {overlaps}] [{overlapTop}]\n");
             }
         }
         catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -962,6 +963,24 @@ public sealed class Commands
     private static bool BoxContains(Extents3d box, Point3d p) =>
         p.X >= box.MinPoint.X && p.X <= box.MaxPoint.X &&
         p.Y >= box.MinPoint.Y && p.Y <= box.MaxPoint.Y;
+
+    /// <summary>统计 ADIM 图层最终落地的 Dimension 数与 MText 注记数。</summary>
+    private static (int dims, int notes) CountAdimEntities(Database db)
+    {
+        int dims = 0, notes = 0;
+        using Transaction tr = db.TransactionManager.StartTransaction();
+        var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+        var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+        foreach (ObjectId id in ms)
+        {
+            if (tr.GetObject(id, OpenMode.ForRead) is not Entity ent) continue;
+            if (ent.Layer != "ADIM") continue;
+            if (ent is Dimension) dims++;
+            else if (ent is MText mt && Cad.AdimMarker.IsMarked(mt)) notes++;
+        }
+        tr.Commit();
+        return (dims, notes);
+    }
 
     /// <summary>统计 ADIM 图层标注【文字实体】之间的真实撞车对数（可读性指标）。
     /// 尺寸链/投影的 AABB 常互相交叉但图形不接触，用文字框更接近"看起来乱不乱"。</summary>
